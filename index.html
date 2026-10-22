@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0d12">
+  <meta name="description" content="Lavori di casa condivisi con la famiglia">
+  <title>Lavori di casa</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div>
+      <div class="hello" id="hello">Ciao 👋</div>
+      <h1>Lavori di casa</h1>
+    </div>
+    <div class="top-actions">
+      <button class="icon-btn" id="btnSync" aria-label="Aggiorna">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+      </button>
+      <button class="me-btn" id="btnMe" aria-label="Impostazioni">?</button>
+    </div>
+  </header>
+
+  <div class="banner hidden" id="banner"></div>
+
+  <section class="cards" id="cards"></section>
+
+  <nav class="tabs" id="tabs">
+    <button data-view="cal">Calendario</button>
+    <button data-view="list">Lista</button>
+  </nav>
+
+  <main id="main"></main>
+
+  <button class="fab" id="fab" aria-label="Nuovo lavoro">
+    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+  </button>
+
+  <div class="sheet-bg hidden" id="sheetBg">
+    <div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
+  </div>
+
+  <div class="toast hidden" id="toast"></div>
+
+  <script src="logica.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
