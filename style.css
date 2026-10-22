@@ -245,6 +245,16 @@ h1 { margin: 2px 0 0; font-size: 24px; letter-spacing: -0.02em; }
 .st-r { display: flex; gap: 10px; padding: 8px 0; font-size: 13.5px; }
 .st-r .muted.small { margin-top: 1px; }
 
+/* ---------- Persone di un lavoro ---------- */
+.avs { display: inline-flex; }
+.avs .av + .av { margin-left: -5px; box-shadow: 0 0 0 2px var(--card); }
+.p-row-wrap + .p-row-wrap { border-top: 1px solid var(--line); }
+.p-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; }
+.p-row b { flex: 1; font-weight: 600; }
+.p-extra { margin: -2px 0 8px 32px; font-size: 14px; display: flex; flex-direction: column; gap: 4px; }
+.mini-actions { display: flex; gap: 8px; margin: 0 0 10px 32px; }
+.btn.sm { padding: 8px 12px; font-size: 13.5px; border-radius: 12px; }
+
 /* ---------- Moduli ---------- */
 form { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
 label, .lbl { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); font-weight: 600; }

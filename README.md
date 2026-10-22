@@ -2,8 +2,8 @@
 
 App per dividere i lavori di casa in famiglia, collegata a Google Calendar.
 
-- Chi crea un lavoro sceglie giorno, ora (facoltativa), dettagli e **per chi** è.
-- Chi lo riceve può: **accettare**, **dire che non può**, **proporre un altro giorno** o **proporre una modifica**.
+- Chi crea un lavoro sceglie giorno, ora (facoltativa), dettagli e **per chi** è: una o più persone.
+- Ognuna delle persone, per conto suo, può: **accettare**, **dire che non può**, **proporre un altro giorno** o **proporre una modifica**.
 - Chi l'ha creato accetta o no la proposta. Alla fine si segna **fatto**.
 - Ogni lavoro diventa un evento nel calendario Google **"Lavori di casa"** (colore = stato). Se lo sposti dal calendario, l'app se ne accorge.
 - Avvisi via **email** a ogni novità, numerino sull'icona dell'app e cronologia di ogni lavoro.

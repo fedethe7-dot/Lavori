@@ -1,7 +1,7 @@
 'use strict';
 /* Lavori di casa — interfaccia dell'app */
 
-const VERSIONE = '1.0';
+const VERSIONE = '1.1';
 const STATI = {
   attesa:    { label: 'In attesa', icon: '⏳', cls: 's-attesa' },
   accettato: { label: 'Accettato', icon: '✅', cls: 's-accettato' },
@@ -73,21 +73,29 @@ function avatar(nome, cls = '') {
 }
 
 /* ---------- Cosa tocca a me ---------- */
+const miaRisposta = j => (j.risposte && j.risposte[cfg.me]) || null;
+const altri = j => j.assegnati.filter(n => n !== j.creatore);
+const conStato = (j, s) => altri(j).filter(n => j.risposte[n] && j.risposte[n].stato === s);
+
 function toccaAMe(j) {
   const me = cfg.me;
-  if (!me) return '';
-  if (j.stato === 'attesa' && j.assegnato === me && j.creatore !== me) return 'Tocca a te rispondere';
-  if (j.stato === 'proposta' && j.creatore === me && j.assegnato !== me) return 'Valuta la proposta';
-  if (j.stato === 'rifiutato' && j.creatore === me && j.assegnato !== me) return 'Cambia giorno o persona';
+  if (!me || j.stato === 'fatto') return '';
+  const mia = miaRisposta(j);
+  if (mia && j.creatore !== me && mia.stato === 'attesa') return 'Tocca a te rispondere';
+  if (j.creatore === me) {
+    const prop = conStato(j, 'proposta');
+    if (prop.length) return prop.length === 1 ? `${prop[0]} propone una modifica` : `${prop.length} proposte da vedere`;
+    if (j.stato === 'rifiutato') return 'Nessuno può: cambia giorno o persone';
+  }
   return '';
 }
 function gruppi() {
-  const me = cfg.me, t = oggi(), fra7 = piuGiorni(t, 7), L = st.lavori;
+  const me = cfg.me, t = oggi(), fra7 = piuGiorni(t, 7), L = st.lavori.filter(j => j.stato !== 'fatto');
   return {
-    rispondere: L.filter(j => j.stato === 'attesa' && j.assegnato === me && j.creatore !== me),
-    valutare: L.filter(j => (j.stato === 'proposta' || j.stato === 'rifiutato') && j.creatore === me && j.assegnato !== me),
-    aspetto: L.filter(j => j.stato === 'attesa' && j.creatore === me && j.assegnato !== me),
-    settimana: L.filter(j => j.assegnato === me && j.data >= t && j.data <= fra7 && (j.stato === 'accettato' || j.stato === 'proposta'))
+    rispondere: L.filter(j => j.creatore !== me && (miaRisposta(j) || {}).stato === 'attesa'),
+    valutare: L.filter(j => j.creatore === me && (conStato(j, 'proposta').length || j.stato === 'rifiutato')),
+    aspetto: L.filter(j => j.creatore === me && conStato(j, 'attesa').length),
+    settimana: L.filter(j => miaRisposta(j) && j.data >= t && j.data <= fra7 && ['accettato', 'proposta'].includes(miaRisposta(j).stato))
   };
 }
 const CARDS = [
@@ -102,6 +110,7 @@ const Prova = {
   leggi() {
     let db = S.get('dbProva', null);
     if (!db) { db = datiDiProva(); S.set('dbProva', db); }
+    db.lavori.forEach(normalizza);
     return db;
   },
   pacchetto(db) {
@@ -138,23 +147,19 @@ const backend = () => (cfg.url ? Foglio : Prova);
 
 function datiDiProva() {
   const t = oggi(), adesso = new Date().toISOString();
-  const L = o => Object.assign({
-    id: nuovoId(), descrizione: '', ora: '', durata: 60,
-    propData: '', propOra: '', propTitolo: '', propDescrizione: '', nota: '', eventoId: '', creato: adesso, aggiornato: adesso
-  }, o);
-  const lavori = [
-    L({ titolo: 'Tagliare l\'erba in giardino', descrizione: 'Davanti e dietro casa.\nIl trattorino ha già la benzina.', data: piuGiorni(t, 2), ora: '09:30', durata: 120, assegnato: 'Federico', creatore: 'Mamma', stato: 'attesa' }),
-    L({ titolo: 'Portare i cani dal veterinario', descrizione: 'Richiamo del vaccino per tutti e due.', data: piuGiorni(t, 3), ora: '17:00', assegnato: 'Sorella', creatore: 'Federico', stato: 'proposta', propData: piuGiorni(t, 5), propOra: '10:00', nota: 'Quel giorno esco tardi dal lavoro, va bene così?' }),
-    L({ titolo: 'Pulire le grondaie', data: piuGiorni(t, 6), assegnato: 'Federico', creatore: 'Federico', stato: 'accettato' }),
-    L({ titolo: 'Spesa grande', descrizione: 'La lista è sul frigo', data: t, ora: '18:30', assegnato: 'Mamma', creatore: 'Federico', stato: 'accettato' }),
-    L({ titolo: 'Cambiare la lampadina in taverna', data: piuGiorni(t, -2), assegnato: 'Federico', creatore: 'Mamma', stato: 'fatto' })
-  ];
-  const storico = [];
-  lavori.forEach(j => {
-    storico.push({ quando: adesso, id: j.id, titolo: j.titolo, chi: j.creatore, azione: 'ha creato il lavoro', dettaglio: j.assegnato === j.creatore ? 'per sé' : 'per ' + j.assegnato });
-    if (j.stato === 'proposta') storico.push({ quando: adesso, id: j.id, titolo: j.titolo, chi: j.assegnato, azione: 'propone un altro giorno', dettaglio: j.nota });
-  });
-  return { lavori, storico };
+  const db = { lavori: [], storico: [] };
+  const fai = (chi, p) => applica(db, Object.assign({ chi }, p), adesso).lavoro;
+  fai('Mamma', { action: 'crea', titolo: 'Tagliare l\'erba in giardino', descrizione: 'Davanti e dietro casa.\nIl trattorino ha già la benzina.', data: piuGiorni(t, 2), ora: '09:30', durata: 120, assegnati: ['Federico'] });
+  const taverna = fai('Federico', { action: 'crea', titolo: 'Pulire la taverna', descrizione: 'Spazzare, lavare il pavimento e buttare i cartoni.', data: piuGiorni(t, 3), ora: '17:00', assegnati: ['Mamma', 'Sorella'] });
+  fai('Mamma', { action: 'rispondi', id: taverna.id, tipo: 'accetta' });
+  fai('Sorella', { action: 'rispondi', id: taverna.id, tipo: 'data', propData: piuGiorni(t, 5), propOra: '10:00', nota: 'Quel giorno esco tardi dal lavoro, sabato mattina va bene?' });
+  fai('Federico', { action: 'crea', titolo: 'Pulire le grondaie', data: piuGiorni(t, 6), assegnati: ['Federico'] });
+  fai('Federico', { action: 'crea', titolo: 'Spesa grande', descrizione: 'La lista è sul frigo', data: t, ora: '18:30', assegnati: ['Mamma'] });
+  const lamp = fai('Mamma', { action: 'crea', titolo: 'Cambiare la lampadina in taverna', data: piuGiorni(t, -2), assegnati: ['Federico'] });
+  fai('Federico', { action: 'rispondi', id: lamp.id, tipo: 'accetta' });
+  fai('Federico', { action: 'fatto', id: lamp.id });
+  fai('Mamma', { action: 'rispondi', id: db.lavori[3].id, tipo: 'accetta' });
+  return db;
 }
 
 /* ---------- Chiamate in fila (una alla volta) ---------- */
@@ -200,7 +205,7 @@ function azione(p, msgOk) {
 }
 
 function usaDati(d, daCache) {
-  st.lavori = d.lavori || [];
+  st.lavori = (d.lavori || []).map(normalizza);
   st.persone = d.persone || [];
   st.storico = d.storico || [];
   if (!daCache) {
@@ -239,6 +244,10 @@ function render() {
   if (st.view === 'cal') renderCalendario(); else renderLista();
 }
 
+function nomiCorti(nomi) {
+  if (nomi.length <= 2) return nomi.join(' e ');
+  return nomi[0] + ' +' + (nomi.length - 1);
+}
 function riga(j, conData = true) {
   const s = STATI[j.stato] || STATI.attesa;
   const tocca = toccaAMe(j);
@@ -247,7 +256,7 @@ function riga(j, conData = true) {
     <span class="bar"></span>
     <span class="job-main">
       <span class="job-t">${esc(j.titolo)}</span>
-      <span class="job-m">${esc(quando)} · ${avatar(j.assegnato, 'sm')} ${esc(j.assegnato)}</span>
+      <span class="job-m">${esc(quando)} · <span class="avs">${j.assegnati.slice(0, 3).map(n => avatar(n, 'sm')).join('')}</span> ${esc(nomiCorti(j.assegnati))}</span>
       ${tocca ? `<span class="tocca">${esc(tocca)}</span>` : ''}
     </span>
     <span class="pill ${s.cls}">${s.icon} ${s.label}</span>
@@ -331,6 +340,7 @@ function renderLista() {
 function apriPannello(html) {
   const bg = $('#sheetBg');
   const giaAperto = !bg.classList.contains('hidden');
+  $('#sheet').onclick = null;
   $('#sheet').innerHTML = html;
   $('#sheet').scrollTop = 0;
   bg.classList.remove('hidden');
@@ -352,46 +362,66 @@ const testata = titolo => `<div class="sheet-h"><h2>${titolo}</h2><button class=
 const btn = (a, testo, cls = '') => `<button class="btn ${cls}" data-a="${a}">${testo}</button>`;
 
 /* ---------- Dettaglio di un lavoro ---------- */
+const STATI_PERSONA = {
+  attesa: { label: 'Deve rispondere', icon: '⏳', cls: 's-attesa' },
+  accettato: { label: 'Va bene', icon: '✅', cls: 's-accettato' },
+  rifiutato: { label: 'Non può', icon: '❌', cls: 's-rifiutato' },
+  proposta: { label: 'Propone', icon: '🔄', cls: 's-proposta' }
+};
+
+function dettagliProposta(j, r) {
+  const parti = [];
+  if (r.propData) parti.push(`<div><b>Nuovo giorno:</b> ${esc(dataLunga(r.propData))}${r.propOra ? ' alle ' + esc(r.propOra) : ''}</div>`);
+  if (r.propTitolo) {
+    if (r.propTitolo !== j.titolo) parti.push(`<div><b>Nuovo titolo:</b> ${esc(r.propTitolo)}</div>`);
+    if (r.propDescrizione !== j.descrizione) parti.push(`<div><b>Nuovi dettagli:</b><div class="pre">${r.propDescrizione ? esc(r.propDescrizione) : '<i>(nessuno)</i>'}</div></div>`);
+  }
+  return parti.join('');
+}
+
 function apriDettaglio(id) {
   const j = st.lavori.find(x => x.id === id);
   if (!j) { chiudiPannello(); return; }
   st.aperto = id;
   const me = cfg.me, s = STATI[j.stato] || STATI.attesa;
-  const sonoAss = j.assegnato === me, sonoCre = j.creatore === me;
+  const sonoCre = j.creatore === me;
+  const mia = miaRisposta(j);
+  const sonoAss = !!mia;
+  const chiuso = j.stato === 'fatto';
+
+  // una riga per ogni persona del lavoro, con la sua risposta
+  const persone = j.assegnati.map(n => {
+    const r = j.risposte[n] || { stato: 'attesa' };
+    const sp = n === j.creatore ? { label: 'Ha creato il lavoro', icon: '✍️', cls: 's-accettato' } : (STATI_PERSONA[r.stato] || STATI_PERSONA.attesa);
+    let extra = '';
+    if (r.stato === 'proposta') extra += `<div class="p-extra">${dettagliProposta(j, r)}</div>`;
+    if (r.nota) extra += `<div class="p-extra nota">“${esc(r.nota)}”</div>`;
+    if (sonoCre && r.stato === 'proposta' && !chiuso) {
+      extra += `<div class="mini-actions">
+        <button class="btn ok sm" data-a="approva" data-p="${esc(n)}">👍 Va bene</button>
+        <button class="btn no sm" data-a="respingi" data-p="${esc(n)}">↩️ Non va bene</button></div>`;
+    }
+    return `<div class="p-row-wrap"><div class="p-row">${avatar(n, 'xs')}<b>${esc(n)}${n === me ? ' <span class="muted">(io)</span>' : ''}</b>
+      <span class="pill ${sp.cls}">${sp.icon} ${sp.label}</span></div>${extra}</div>`;
+  }).join('');
 
   const az = [];
-  if (sonoAss && !sonoCre && j.stato !== 'fatto') {
-    if (j.stato === 'attesa' || j.stato === 'rifiutato') az.push(btn('accetta', '✅ Va bene', 'ok'));
-    if (j.stato === 'attesa' || j.stato === 'accettato') az.push(btn('rifiuta', j.stato === 'accettato' ? '❌ Non posso più' : '❌ Non posso', 'no'));
-    if (j.stato === 'proposta') az.push(`<div class="info-line">Aspetti la risposta di ${esc(j.creatore)} alla tua proposta</div>`);
+  if (sonoAss && !sonoCre && !chiuso) {
+    if (mia.stato === 'attesa') { az.push(btn('accetta', '✅ Va bene', 'ok')); az.push(btn('rifiuta', '❌ Non posso', 'no')); }
+    if (mia.stato === 'accettato') az.push(btn('rifiuta', '❌ Non posso più', 'no full'));
+    if (mia.stato === 'rifiutato') az.push(btn('accetta', '✅ Adesso posso', 'ok full'));
+    if (mia.stato === 'proposta') az.push(`<div class="info-line">Aspetti la risposta di ${esc(j.creatore)} alla tua proposta</div>`);
     az.push(btn('data', '📅 Altro giorno'));
     az.push(btn('modifica', '✏️ Proponi modifica'));
   }
-  if (sonoCre && !sonoAss && j.stato === 'proposta') {
-    az.push(btn('approva', '👍 Va bene', 'ok'));
-    az.push(btn('respingi', '↩️ Non va bene', 'no'));
-  }
-  if (sonoCre && !sonoAss && j.stato === 'attesa') az.push(`<div class="info-line">Aspetti la risposta di ${esc(j.assegnato)}</div>`);
   if ((sonoCre || sonoAss) && j.stato === 'accettato') az.push(btn('fatto', '✔️ Segna come fatto', 'main full'));
-  if ((sonoCre || sonoAss) && j.stato === 'fatto') az.push(btn('riapri', '↺ Riapri', 'full'));
+  if ((sonoCre || sonoAss) && chiuso) az.push(btn('riapri', '↺ Riapri', 'full'));
   if (sonoCre) {
-    az.push(btn('edita', j.stato === 'rifiutato' ? '✏️ Cambia e rimanda' : 'Modifica lavoro', j.stato === 'rifiutato' ? 'main' : 'ghost'));
+    const rifiutato = j.stato === 'rifiutato';
+    az.push(btn('edita', rifiutato ? '✏️ Cambia e rimanda' : 'Modifica lavoro', rifiutato ? 'main' : 'ghost'));
     az.push(btn('elimina', 'Elimina', 'ghost danger'));
   }
-  if (!sonoCre && !sonoAss) az.push(`<div class="info-line">È un lavoro tra ${esc(j.creatore)} e ${esc(j.assegnato)}</div>`);
-
-  let box = '';
-  if (j.stato === 'proposta') {
-    const parti = [];
-    if (j.propData) parti.push(`<div><b>Nuovo giorno:</b> ${esc(dataLunga(j.propData))}${j.propOra ? ' alle ' + esc(j.propOra) : ''}</div>`);
-    if (j.propTitolo) {
-      if (j.propTitolo !== j.titolo) parti.push(`<div><b>Nuovo titolo:</b> ${esc(j.propTitolo)}</div>`);
-      if (j.propDescrizione !== j.descrizione) parti.push(`<div><b>Nuovi dettagli:</b><div class="pre">${j.propDescrizione ? esc(j.propDescrizione) : '<i>(nessuno)</i>'}</div></div>`);
-    }
-    box = `<div class="box prop"><div class="box-t">🔄 ${esc(j.assegnato)} propone</div>${parti.join('')}${j.nota ? `<div class="nota">“${esc(j.nota)}”</div>` : ''}</div>`;
-  } else if (j.nota) {
-    box = `<div class="box"><div class="box-t">💬 Nota</div><div class="pre">${esc(j.nota)}</div></div>`;
-  }
+  if (!sonoCre && !sonoAss) az.push(`<div class="info-line">Lavoro creato da ${esc(j.creatore)}: non è per te</div>`);
 
   const storia = st.storico.filter(h => h.id === j.id).sort((a, b) => String(b.quando).localeCompare(String(a.quando)));
 
@@ -399,28 +429,30 @@ function apriDettaglio(id) {
     <div class="sheet-h"><span class="pill ${s.cls}">${s.icon} ${s.label}</span><button class="x" data-close aria-label="Chiudi">×</button></div>
     <div class="det-title">${esc(j.titolo)}</div>
     <div class="det-when">📅 ${esc(dataLunga(j.data))}${j.ora ? ` · ${esc(j.ora)} <span class="muted">(${esc(durataTesto(j.durata))})</span>` : ' <span class="muted">· in giornata</span>'}</div>
-    <div class="people">
-      <span class="p">${avatar(j.assegnato, 'xs')} Per <b>${esc(j.assegnato)}</b></span>
-      <span class="p">${avatar(j.creatore, 'xs')} Da <b>${esc(j.creatore)}</b></span>
-    </div>
+    <div class="people"><span class="p">${avatar(j.creatore, 'xs')} Creato da <b>${esc(j.creatore)}</b></span></div>
     ${j.descrizione ? `<div class="box"><div class="box-t">Dettagli</div><div class="pre">${esc(j.descrizione)}</div></div>` : ''}
-    ${box}
+    <div class="box" id="persone"><div class="box-t">${j.assegnati.length > 1 ? `Chi lo fa (${j.assegnati.length})` : 'Chi lo fa'}</div>${persone}</div>
+    ${j.nota ? `<div class="box"><div class="box-t">💬 Nota di ${esc(j.creatore)}</div><div class="pre">${esc(j.nota)}</div></div>` : ''}
     <div class="actions" id="azioni">${az.join('')}</div>
     ${storia.length ? `<div class="storia"><div class="box-t">Cronologia</div>${storia.map(h => `
       <div class="st-r">${avatar(h.chi, 'xs')}<div><b>${esc(h.chi)}</b> ${esc(h.azione)}${h.dettaglio ? ` <span class="muted">— ${esc(h.dettaglio)}</span>` : ''}
       <div class="muted small">${esc(quandoStorico(h.quando))}</div></div></div>`).join('')}</div>` : ''}
   `);
 
-  $('#azioni').onclick = async e => {
+  $('#sheet').onclick = async e => {
     const b = e.target.closest('[data-a]');
     if (!b) return;
-    const a = b.dataset.a;
+    const a = b.dataset.a, persona = b.dataset.p;
     if (a === 'accetta') { if (await azione({ action: 'rispondi', id: j.id, tipo: 'accetta' }, 'Accettato 👍')) chiudiPannello(); }
     else if (a === 'rifiuta') formNota('Non posso', 'Vuoi dire perché? (facoltativo)', 'Invia', nota => azione({ action: 'rispondi', id: j.id, tipo: 'rifiuta', nota }, 'Risposta inviata'));
     else if (a === 'data') formAltroGiorno(j);
     else if (a === 'modifica') formProponiModifica(j);
-    else if (a === 'approva') { if (await azione({ action: 'decidi', id: j.id, approva: true }, 'Proposta accettata 👍')) chiudiPannello(); }
-    else if (a === 'respingi') formNota('Non va bene', 'Scrivi cosa non va (facoltativo)', 'Invia', nota => azione({ action: 'decidi', id: j.id, approva: false, nota }, 'Risposta inviata'));
+    else if (a === 'approva') {
+      const cambia = j.assegnati.filter(n => n !== persona && n !== j.creatore && j.risposte[n].stato !== 'proposta').length;
+      if (cambia && !confirm(`Accettando la proposta di ${persona}, gli altri dovranno riconfermare il lavoro. Va bene?`)) return;
+      if (await azione({ action: 'decidi', id: j.id, persona, approva: true }, 'Proposta accettata 👍')) apriDettaglio(j.id);
+    }
+    else if (a === 'respingi') formNota(`Non va bene (${persona})`, 'Scrivi cosa non va (facoltativo)', 'Invia', nota => azione({ action: 'decidi', id: j.id, persona, approva: false, nota }, 'Risposta inviata'));
     else if (a === 'fatto') { if (await azione({ action: 'fatto', id: j.id }, 'Fatto! 🎉')) chiudiPannello(); }
     else if (a === 'riapri') { if (await azione({ action: 'riapri', id: j.id }, 'Lavoro riaperto')) apriDettaglio(j.id); }
     else if (a === 'edita') formLavoro(j);
@@ -433,42 +465,56 @@ function apriDettaglio(id) {
 }
 
 /* ---------- Moduli ---------- */
-function sceltaPersone(nome, scelto) {
+function sceltaPersone(nome, scelti, multipla) {
   if (!st.persone.length) return '<div class="muted small">Nessuna persona: aggiungile nel foglio (scheda Persone).</div>';
+  const lista = [].concat(scelti || []);
   return `<div class="chips">${st.persone.map(p => `
-    <label><input type="radio" name="${nome}" value="${esc(p.nome)}" ${p.nome === scelto ? 'checked' : ''}>
-    <span class="chip">${avatar(p.nome, 'xs')} ${esc(p.nome)}${p.nome === cfg.me ? ' (io)' : ''}</span></label>`).join('')}</div>`;
+    <label><input type="${multipla ? 'checkbox' : 'radio'}" name="${nome}" value="${esc(p.nome)}" ${lista.includes(p.nome) ? 'checked' : ''}>
+    <span class="chip">${avatar(p.nome, 'xs')} ${esc(p.nome)}${p.nome === cfg.me ? ' (io)' : ''}</span></label>`).join('')}
+    ${multipla && st.persone.length > 2 ? '<button type="button" class="chip-btn" id="tutti">Tutti</button>' : ''}</div>`;
+}
+
+function elencoNomi(nomi) {
+  return nomi.length <= 1 ? (nomi[0] || '') : nomi.slice(0, -1).join(', ') + ' e ' + nomi[nomi.length - 1];
 }
 
 function formLavoro(j, giorno) {
   const nuovo = !j;
-  const v = j || { titolo: '', descrizione: '', data: giorno || oggi(), ora: '', durata: 60, assegnato: (st.persone.find(p => p.nome !== cfg.me) || {}).nome || cfg.me };
+  const primo = (st.persone.find(p => p.nome !== cfg.me) || {}).nome || cfg.me;
+  const v = j || { titolo: '', descrizione: '', data: giorno || oggi(), ora: '', durata: 60, assegnati: primo ? [primo] : [] };
   apriPannello(`${testata(nuovo ? 'Nuovo lavoro' : 'Modifica lavoro')}
     <form id="f" autocomplete="off">
       <label>Cosa c'è da fare<input name="titolo" required maxlength="120" placeholder="Es. Tagliare l'erba" value="${esc(v.titolo)}"></label>
-      <label>Dettagli <span class="muted small">(facoltativi)</span><textarea name="descrizione" rows="3" placeholder="Cosa serve, dove, come…">${esc(v.descrizione)}</textarea></label>
+      <label><span>Dettagli <span class="muted small">(facoltativi)</span></span><textarea name="descrizione" rows="3" placeholder="Cosa serve, dove, come…">${esc(v.descrizione)}</textarea></label>
       <div class="row2">
         <label>Giorno<input type="date" name="data" required value="${esc(v.data)}"></label>
-        <label>Ora <span class="muted small">(facoltativa)</span><input type="time" name="ora" value="${esc(v.ora)}"></label>
+        <label><span>Ora <span class="muted small">(facoltativa)</span></span><input type="time" name="ora" value="${esc(v.ora)}"></label>
       </div>
       <label id="rigaDurata">Quanto dura<select name="durata">${DURATE.map(d => `<option value="${d[0]}" ${Number(v.durata) === d[0] ? 'selected' : ''}>${d[1]}</option>`).join('')}</select></label>
-      <div class="lbl">Per chi</div>
-      ${sceltaPersone('assegnato', v.assegnato)}
-      ${!nuovo ? '<div class="muted small">Salvando, il lavoro torna "in attesa" e la persona riceve un nuovo avviso.</div>' : ''}
+      <div class="lbl"><span>Per chi <span class="muted small">(puoi sceglierne più di uno)</span></span></div>
+      ${sceltaPersone('assegnati', v.assegnati, true)}
+      ${!nuovo ? '<div class="muted small">Salvando, tutti devono rispondere di nuovo e ricevono un avviso.</div>' : ''}
       <div class="err" id="err"></div>
       <button class="btn main big" type="submit">${nuovo ? 'Salva e avvisa' : 'Salva modifiche'}</button>
     </form>`);
   const f = $('#f');
   const durata = () => $('#rigaDurata').classList.toggle('hidden', !f.ora.value);
   f.ora.addEventListener('input', durata); durata();
+  const tutti = $('#tutti');
+  if (tutti) tutti.onclick = () => {
+    const box = [...f.querySelectorAll('input[name=assegnati]')];
+    const accendi = box.some(b => !b.checked);
+    box.forEach(b => { b.checked = accendi; });
+  };
   if (nuovo) setTimeout(() => f.titolo.focus(), 250);
   f.onsubmit = async e => {
     e.preventDefault();
-    const sel = f.querySelector('input[name=assegnato]:checked');
-    if (!sel) { $('#err').textContent = 'Scegli per chi è il lavoro'; return; }
-    const dati = { titolo: f.titolo.value, descrizione: f.descrizione.value, data: f.data.value, ora: f.ora.value, durata: f.durata.value, assegnato: sel.value };
+    const scelti = [...f.querySelectorAll('input[name=assegnati]:checked')].map(x => x.value);
+    if (!scelti.length) { $('#err').textContent = 'Scegli almeno una persona'; return; }
+    const dati = { titolo: f.titolo.value, descrizione: f.descrizione.value, data: f.data.value, ora: f.ora.value, durata: f.durata.value, assegnati: scelti };
+    const altriScelti = scelti.filter(n => n !== cfg.me);
     const ok = await azione(nuovo ? Object.assign({ action: 'crea' }, dati) : Object.assign({ action: 'modifica', id: j.id }, dati),
-      nuovo ? (dati.assegnato === cfg.me ? 'Lavoro salvato' : `Inviato a ${dati.assegnato} 📨`) : 'Modifiche salvate');
+      nuovo ? (altriScelti.length ? `Inviato a ${elencoNomi(altriScelti)} 📨` : 'Lavoro salvato') : 'Modifiche salvate');
     if (ok) {
       st.giorno = dati.data;
       const d = daYmd(dati.data); st.mese = new Date(d.getFullYear(), d.getMonth(), 1);
@@ -484,9 +530,9 @@ function formAltroGiorno(j) {
     <form id="f">
       <div class="row2">
         <label>Nuovo giorno<input type="date" name="data" required min="${oggi()}" value="${esc(j.data)}"></label>
-        <label>Ora <span class="muted small">(facoltativa)</span><input type="time" name="ora" value="${esc(j.ora)}"></label>
+        <label><span>Ora <span class="muted small">(facoltativa)</span></span><input type="time" name="ora" value="${esc(j.ora)}"></label>
       </div>
-      <label>Messaggio <span class="muted small">(facoltativo)</span><textarea name="nota" rows="2" placeholder="Es. Sabato mattina sono libero"></textarea></label>
+      <label><span>Messaggio <span class="muted small">(facoltativo)</span></span><textarea name="nota" rows="2" placeholder="Es. Sabato mattina sono libero"></textarea></label>
       <div class="err" id="err"></div>
       <button class="btn main big" type="submit">Invia proposta</button>
     </form>`);
@@ -504,7 +550,7 @@ function formProponiModifica(j) {
     <form id="f">
       <label>Cosa c'è da fare<input name="titolo" required maxlength="120" value="${esc(j.titolo)}"></label>
       <label>Dettagli<textarea name="descrizione" rows="4">${esc(j.descrizione)}</textarea></label>
-      <label>Messaggio <span class="muted small">(facoltativo)</span><textarea name="nota" rows="2" placeholder="Es. Serve anche il decespugliatore"></textarea></label>
+      <label><span>Messaggio <span class="muted small">(facoltativo)</span></span><textarea name="nota" rows="2" placeholder="Es. Serve anche il decespugliatore"></textarea></label>
       <div class="err" id="err"></div>
       <button class="btn main big" type="submit">Invia proposta</button>
     </form>`);
@@ -536,7 +582,7 @@ function apriImpostazioni(messaggio) {
     <form id="f" autocomplete="off">
       <div class="lbl">Chi sei?</div>
       <div id="sceltaMe">${sceltaPersone('me', cfg.me)}</div>
-      ${prova ? `<label>Persone della famiglia <span class="muted small">(separate da virgola, solo modalità prova)</span>
+      ${prova ? `<label><span>Persone della famiglia <span class="muted small">(separate da virgola, solo modalità prova)</span></span>
         <input name="persone" value="${esc(S.get('personeProva', PERSONE_PROVA).join(', '))}"></label>` : ''}
       <div class="box">
         <div class="box-t">Collegamento al foglio Google</div>

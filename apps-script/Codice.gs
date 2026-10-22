@@ -1,16 +1,16 @@
-/* Lavori di casa — Codice.gs (regole + server). Incolla tutto questo nell'editor Apps Script. */
+/* Lavori di casa — Codice.gs v1.1 (regole + server). Incolla tutto questo nell'editor Apps Script. */
 
 /*
  * Lavori di casa — regole dei lavori.
  * Questo stesso file gira sia nell'app (modalità prova) sia nell'Apps Script del foglio,
  * così le regole sono identiche nei due posti.
  *
- * Stati di un lavoro:
- *   attesa    -> creato, aspetta la risposta di chi lo deve fare
- *   accettato -> chi lo deve fare ha detto sì
- *   rifiutato -> chi lo deve fare ha detto che non può
- *   proposta  -> chi lo deve fare propone un altro giorno o una modifica
- *   fatto     -> lavoro completato
+ * Un lavoro può essere per una o più persone (assegnati). Ognuna risponde per conto suo:
+ *   attesa    -> deve ancora rispondere
+ *   accettato -> ha detto sì
+ *   rifiutato -> ha detto che non può
+ *   proposta  -> propone un altro giorno o una modifica
+ * Lo stato del lavoro si calcola dalle risposte; "fatto" chiude il lavoro.
  */
 
 var STATI_LAVORO = ['attesa', 'accettato', 'rifiutato', 'proposta', 'fatto'];
@@ -21,6 +21,61 @@ function nuovoId() {
 
 function _testo(v) {
   return String(v == null ? '' : v).trim();
+}
+
+function _nomi(v) {
+  var lista = Array.isArray(v) ? v : String(v == null ? '' : v).split(',');
+  var out = [];
+  lista.forEach(function (n) {
+    n = _testo(n);
+    if (n && out.indexOf(n) < 0) out.push(n);
+  });
+  return out;
+}
+
+function _rispostaVuota(stato) {
+  return { stato: stato || 'attesa', nota: '', propData: '', propOra: '', propTitolo: '', propDescrizione: '', quando: '' };
+}
+
+/* Stato del lavoro calcolato dalle risposte delle persone */
+function statoComplessivo(j) {
+  if (j.stato === 'fatto') return 'fatto';
+  var stati = j.assegnati.map(function (n) { return (j.risposte[n] || {}).stato || 'attesa'; });
+  if (!stati.length) return 'attesa';
+  if (stati.indexOf('proposta') >= 0) return 'proposta';
+  if (stati.indexOf('attesa') >= 0) return 'attesa';
+  if (stati.every(function (s) { return s === 'rifiutato'; })) return 'rifiutato';
+  return 'accettato';
+}
+
+/* Mette un lavoro nella forma giusta (anche quelli creati con la versione 1, a persona singola) */
+function normalizza(j) {
+  var vecchio = !j.risposte || j.risposte === '{}' ? j : null;
+  if (!Array.isArray(j.assegnati)) j.assegnati = _nomi(j.assegnati != null && j.assegnati !== '' ? j.assegnati : j.assegnato);
+  if (typeof j.risposte === 'string') {
+    try { j.risposte = JSON.parse(j.risposte || '{}'); } catch (e) { j.risposte = {}; }
+  }
+  if (!j.risposte || typeof j.risposte !== 'object') j.risposte = {};
+  j.assegnati.forEach(function (n) {
+    if (j.risposte[n]) return;
+    var r = _rispostaVuota(n === j.creatore ? 'accettato' : 'attesa');
+    if (vecchio && j.assegnati.length === 1 && n !== j.creatore && j.stato && j.stato !== 'fatto') {
+      r.stato = j.stato;
+      r.nota = _testo(j.nota);
+      r.propData = _testo(j.propData); r.propOra = _testo(j.propOra);
+      r.propTitolo = _testo(j.propTitolo); r.propDescrizione = _testo(j.propDescrizione);
+    }
+    j.risposte[n] = r;
+  });
+  Object.keys(j.risposte).forEach(function (n) {
+    if (j.assegnati.indexOf(n) < 0) delete j.risposte[n];
+  });
+  if (vecchio && j.assegnati.length === 1) j.nota = '';
+  ['assegnato', 'propData', 'propOra', 'propTitolo', 'propDescrizione'].forEach(function (k) { delete j[k]; });
+  j.durata = Number(j.durata) > 0 ? Math.round(Number(j.durata)) : 60;
+  j.nota = _testo(j.nota);
+  j.stato = statoComplessivo(j);
+  return j;
 }
 
 /**
@@ -45,29 +100,48 @@ function applica(db, p, adesso) {
   }
   function trova() {
     for (var i = 0; i < db.lavori.length; i++) {
-      if (db.lavori[i].id === p.id) return db.lavori[i];
+      if (db.lavori[i].id === p.id) return normalizza(db.lavori[i]);
     }
     throw new Error('Lavoro non trovato: forse è stato eliminato. Aggiorna la pagina.');
   }
   function avvisa(a, tipo, lav) {
     if (a && a !== chi) notifiche.push({ a: a, tipo: tipo, id: lav.id });
   }
-  function pulisciProposta(lav) {
-    lav.propData = ''; lav.propOra = ''; lav.propTitolo = ''; lav.propDescrizione = '';
+  function avvisaTutti(lav, tipo) {
+    var tutti = [lav.creatore].concat(lav.assegnati);
+    tutti.forEach(function (n, i) { if (tutti.indexOf(n) === i) avvisa(n, tipo, lav); });
+  }
+  function dataBella(d, o) {
+    return d.split('-').reverse().join('/') + (o ? ' alle ' + o : '');
   }
   function durata(v) {
     var n = Number(v);
     return n > 0 ? Math.round(n) : 60;
   }
-  function richiediCampi() {
+  function leggiCampi() {
+    var a = _nomi(p.assegnati != null ? p.assegnati : p.assegnato);
     if (!_testo(p.titolo)) throw new Error('Scrivi cosa c\'è da fare');
     if (!_testo(p.data)) throw new Error('Scegli il giorno');
-    if (!_testo(p.assegnato)) throw new Error('Scegli per chi è il lavoro');
+    if (!a.length) throw new Error('Scegli almeno una persona');
+    return a;
+  }
+  function perChi(lav) {
+    var altri = lav.assegnati.filter(function (n) { return n !== chi; });
+    if (!altri.length) return 'per sé';
+    return 'per ' + (lav.assegnati.indexOf(chi) >= 0 ? 'sé, ' : '') + altri.join(', ');
+  }
+  /* tutti tornano "in attesa" (chi ha creato il lavoro e chi è indicato in "tranne" restano com'erano) */
+  function ripartiDaCapo(lav, tranne) {
+    lav.assegnati.forEach(function (n) {
+      if (n === tranne) return;
+      lav.risposte[n] = _rispostaVuota(n === lav.creatore ? 'accettato' : 'attesa');
+      if (n !== lav.creatore) avvisa(n, 'modificato', lav);
+    });
   }
 
   switch (p.action) {
-    case 'crea':
-      richiediCampi();
+    case 'crea': {
+      var assegnati = leggiCampi();
       j = {
         id: nuovoId(),
         titolo: _testo(p.titolo),
@@ -75,107 +149,136 @@ function applica(db, p, adesso) {
         data: _testo(p.data),
         ora: _testo(p.ora),
         durata: durata(p.durata),
-        assegnato: _testo(p.assegnato),
+        assegnati: assegnati,
         creatore: chi,
-        stato: _testo(p.assegnato) === chi ? 'accettato' : 'attesa',
-        propData: '', propOra: '', propTitolo: '', propDescrizione: '',
+        stato: 'attesa',
+        risposte: {},
         nota: '', eventoId: '', creato: adesso, aggiornato: adesso
       };
+      assegnati.forEach(function (n) {
+        j.risposte[n] = _rispostaVuota(n === chi ? 'accettato' : 'attesa');
+        avvisa(n, 'nuovo', j);
+      });
       db.lavori.push(j);
-      log(j, 'ha creato il lavoro', j.assegnato === chi ? 'per sé' : 'per ' + j.assegnato);
-      avvisa(j.assegnato, 'nuovo', j);
+      log(j, 'ha creato il lavoro', perChi(j));
       calendario = 'salva';
       break;
+    }
 
-    case 'modifica':
+    case 'modifica': {
       j = trova();
       if (chi !== j.creatore) throw new Error('Solo ' + j.creatore + ' può modificare questo lavoro');
-      richiediCampi();
+      var nuovi = leggiCampi();
+      var tolti = j.assegnati.filter(function (n) { return nuovi.indexOf(n) < 0; });
       j.titolo = _testo(p.titolo);
       j.descrizione = _testo(p.descrizione);
       j.data = _testo(p.data);
       j.ora = _testo(p.ora);
       j.durata = durata(p.durata);
-      j.assegnato = _testo(p.assegnato);
-      pulisciProposta(j);
+      j.assegnati = nuovi;
+      j.risposte = {};
       j.nota = '';
-      j.stato = j.assegnato === chi ? 'accettato' : 'attesa';
-      log(j, 'ha modificato il lavoro', '');
-      avvisa(j.assegnato, 'modificato', j);
+      if (j.stato === 'fatto') j.stato = '';
+      nuovi.forEach(function (n) {
+        j.risposte[n] = _rispostaVuota(n === chi ? 'accettato' : 'attesa');
+        avvisa(n, 'modificato', j);
+      });
+      tolti.forEach(function (n) { avvisa(n, 'tolto', j); });
+      log(j, 'ha modificato il lavoro', perChi(j));
       calendario = 'salva';
       break;
+    }
 
-    case 'rispondi':
+    case 'rispondi': {
       j = trova();
-      if (chi !== j.assegnato) throw new Error('Può rispondere solo ' + j.assegnato);
+      if (j.assegnati.indexOf(chi) < 0) throw new Error('Questo lavoro non è per te');
+      if (chi === j.creatore) throw new Error('L\'hai creato tu: per cambiarlo usa "Modifica lavoro"');
       if (j.stato === 'fatto') throw new Error('Il lavoro è già fatto');
-      j.nota = _testo(p.nota);
+      var r = _rispostaVuota();
+      r.nota = _testo(p.nota);
+      r.quando = adesso;
       if (p.tipo === 'accetta') {
-        pulisciProposta(j);
-        j.stato = 'accettato';
-        log(j, 'ha accettato', j.nota);
+        r.stato = 'accettato';
+        log(j, 'ha accettato', r.nota);
       } else if (p.tipo === 'rifiuta') {
-        pulisciProposta(j);
-        j.stato = 'rifiutato';
-        log(j, 'non può farlo', j.nota);
+        r.stato = 'rifiutato';
+        log(j, 'non può farlo', r.nota);
       } else if (p.tipo === 'data') {
         if (!_testo(p.propData)) throw new Error('Scegli il nuovo giorno');
-        pulisciProposta(j);
-        j.propData = _testo(p.propData);
-        j.propOra = _testo(p.propOra);
-        j.stato = 'proposta';
-        log(j, 'propone un altro giorno', j.propData.split('-').reverse().join('/') + (j.propOra ? ' alle ' + j.propOra : '') + (j.nota ? ' — ' + j.nota : ''));
+        r.stato = 'proposta';
+        r.propData = _testo(p.propData);
+        r.propOra = _testo(p.propOra);
+        log(j, 'propone un altro giorno', dataBella(r.propData, r.propOra) + (r.nota ? ' — ' + r.nota : ''));
       } else if (p.tipo === 'modifica') {
         var t = _testo(p.propTitolo);
         var d = _testo(p.propDescrizione);
         if (!t) throw new Error('Il titolo non può essere vuoto');
         if (t === j.titolo && d === j.descrizione) throw new Error('Non hai cambiato niente');
-        pulisciProposta(j);
-        j.propTitolo = t;
-        j.propDescrizione = d;
-        j.stato = 'proposta';
-        log(j, 'propone una modifica', j.nota);
+        r.stato = 'proposta';
+        r.propTitolo = t;
+        r.propDescrizione = d;
+        log(j, 'propone una modifica', r.nota);
       } else {
         throw new Error('Risposta non valida');
       }
+      j.risposte[chi] = r;
       avvisa(j.creatore, p.tipo, j);
       calendario = 'salva';
       break;
+    }
 
-    case 'decidi':
+    case 'decidi': {
       j = trova();
       if (chi !== j.creatore) throw new Error('Solo ' + j.creatore + ' può decidere sulla proposta');
-      if (j.stato !== 'proposta') throw new Error('Non c\'è nessuna proposta da valutare');
+      var proponenti = j.assegnati.filter(function (n) { return j.risposte[n].stato === 'proposta'; });
+      var chiPropone = _testo(p.persona) || (proponenti.length === 1 ? proponenti[0] : '');
+      var rp = chiPropone && j.risposte[chiPropone];
+      if (!rp || rp.stato !== 'proposta') throw new Error('Non c\'è nessuna proposta da valutare');
       if (p.approva) {
-        if (j.propData) { j.data = j.propData; j.ora = j.propOra; }
-        if (j.propTitolo) { j.titolo = j.propTitolo; j.descrizione = j.propDescrizione; }
-        j.stato = 'accettato';
-        log(j, 'ha accettato la proposta', _testo(p.nota));
-        avvisa(j.assegnato, 'approvata', j);
+        var cambiato = false;
+        if (rp.propData) {
+          cambiato = rp.propData !== j.data || rp.propOra !== j.ora;
+          j.data = rp.propData; j.ora = rp.propOra;
+        }
+        if (rp.propTitolo) {
+          cambiato = cambiato || rp.propTitolo !== j.titolo || rp.propDescrizione !== j.descrizione;
+          j.titolo = rp.propTitolo; j.descrizione = rp.propDescrizione;
+        }
+        j.risposte[chiPropone] = _rispostaVuota('accettato');
+        j.risposte[chiPropone].quando = adesso;
+        // se il lavoro è cambiato, chi aveva già risposto deve riconfermare (le altre proposte restano)
+        if (cambiato) {
+          j.assegnati.forEach(function (n) {
+            if (n === chiPropone || n === j.creatore || j.risposte[n].stato === 'proposta') return;
+            j.risposte[n] = _rispostaVuota('attesa');
+            avvisa(n, 'modificato', j);
+          });
+        }
+        log(j, 'ha accettato la proposta di ' + chiPropone, _testo(p.nota));
+        avvisa(chiPropone, 'approvata', j);
       } else {
-        j.stato = 'attesa';
-        log(j, 'non ha accettato la proposta', _testo(p.nota));
-        avvisa(j.assegnato, 'respinta', j);
+        j.risposte[chiPropone] = _rispostaVuota('attesa');
+        log(j, 'non ha accettato la proposta di ' + chiPropone, _testo(p.nota));
+        avvisa(chiPropone, 'respinta', j);
       }
-      pulisciProposta(j);
       j.nota = _testo(p.nota);
       calendario = 'salva';
       break;
+    }
 
     case 'fatto':
       j = trova();
-      if (chi !== j.creatore && chi !== j.assegnato) throw new Error('Non è un tuo lavoro');
+      if (chi !== j.creatore && j.assegnati.indexOf(chi) < 0) throw new Error('Non è un tuo lavoro');
       j.stato = 'fatto';
-      pulisciProposta(j);
       log(j, 'ha segnato come fatto', '');
-      avvisa(chi === j.creatore ? j.assegnato : j.creatore, 'fatto', j);
+      avvisaTutti(j, 'fatto');
       calendario = 'salva';
       break;
 
     case 'riapri':
       j = trova();
-      if (chi !== j.creatore && chi !== j.assegnato) throw new Error('Non è un tuo lavoro');
-      j.stato = 'accettato';
+      if (chi !== j.creatore && j.assegnati.indexOf(chi) < 0) throw new Error('Non è un tuo lavoro');
+      j.stato = '';
       log(j, 'ha riaperto il lavoro', '');
       calendario = 'salva';
       break;
@@ -185,7 +288,7 @@ function applica(db, p, adesso) {
       if (chi !== j.creatore) throw new Error('Solo ' + j.creatore + ' può eliminarlo');
       db.lavori.splice(db.lavori.indexOf(j), 1);
       log(j, 'ha eliminato il lavoro', '');
-      avvisa(j.assegnato, 'eliminato', j);
+      avvisaTutti(j, 'eliminato');
       calendario = 'elimina';
       break;
 
@@ -193,6 +296,7 @@ function applica(db, p, adesso) {
       throw new Error('Azione sconosciuta');
   }
 
+  j.stato = statoComplessivo(j);
   j.aggiornato = adesso;
   return { lavoro: j, notifiche: notifiche, calendario: calendario };
 }
@@ -211,15 +315,22 @@ var FOGLIO_PERSONE = 'Persone';
 var FOGLIO_STORICO = 'Storico';
 var FOGLIO_IMPOSTAZIONI = 'Impostazioni';
 
-var CAMPI = ['id', 'titolo', 'descrizione', 'data', 'ora', 'durata', 'assegnato', 'creatore', 'stato',
-  'propData', 'propOra', 'propTitolo', 'propDescrizione', 'nota', 'eventoId', 'creato', 'aggiornato'];
+var CAMPI = ['id', 'titolo', 'descrizione', 'data', 'ora', 'durata', 'assegnati', 'creatore', 'stato',
+  'risposte', 'nota', 'eventoId', 'creato', 'aggiornato'];
 var INTESTAZIONI = ['ID', 'Titolo', 'Descrizione', 'Data', 'Ora', 'Durata (min)', 'Per chi', 'Creato da', 'Stato',
-  'Proposta: giorno', 'Proposta: ora', 'Proposta: titolo', 'Proposta: dettagli', 'Nota', 'ID evento calendario', 'Creato il', 'Aggiornato il'];
+  'Risposte (non toccare)', 'Nota', 'ID evento calendario', 'Creato il', 'Aggiornato il'];
+// nomi delle colonne riconosciuti, anche quelli della versione 1 (lavori per una sola persona)
+var COLONNE = {
+  'ID': 'id', 'Titolo': 'titolo', 'Descrizione': 'descrizione', 'Data': 'data', 'Ora': 'ora', 'Durata (min)': 'durata',
+  'Per chi': 'assegnati', 'Creato da': 'creatore', 'Stato': 'stato', 'Risposte (non toccare)': 'risposte', 'Risposte': 'risposte',
+  'Proposta: giorno': 'propData', 'Proposta: ora': 'propOra', 'Proposta: titolo': 'propTitolo', 'Proposta: dettagli': 'propDescrizione',
+  'Nota': 'nota', 'ID evento calendario': 'eventoId', 'Creato il': 'creato', 'Aggiornato il': 'aggiornato'
+};
 var CAMPI_STORICO = ['quando', 'id', 'titolo', 'chi', 'azione', 'dettaglio'];
 var INTESTAZIONI_STORICO = ['Quando', 'ID lavoro', 'Lavoro', 'Chi', 'Azione', 'Dettaglio'];
 
 var ICONE = { attesa: '⏳', accettato: '✅', rifiutato: '❌', proposta: '🔄', fatto: '✔️' };
-var NOMI_STATO = { attesa: 'In attesa di risposta', accettato: 'Accettato', rifiutato: 'Non può', proposta: 'Proposta di modifica', fatto: 'Fatto' };
+var NOMI_STATO = { attesa: 'In attesa di risposta', accettato: 'Accettato', rifiutato: 'Non può', proposta: 'Propone una modifica', fatto: 'Fatto' };
 
 /* ---------- Menu nel foglio ---------- */
 function onOpen() {
@@ -234,7 +345,12 @@ function onOpen() {
 function setup() {
   var ss = SpreadsheetApp.getActive();
 
-  var lav = preparaFoglio_(ss, FOGLIO_LAVORI, INTESTAZIONI);
+  var lav = ss.getSheetByName(FOGLIO_LAVORI);
+  if (lav && lav.getLastRow() > 1) {
+    scriviLavori_(leggiLavori_(lav, ss.getSpreadsheetTimeZone())); // converte i lavori esistenti
+  } else {
+    lav = preparaFoglio_(ss, FOGLIO_LAVORI, INTESTAZIONI);
+  }
   lav.getRange(1, 1, lav.getMaxRows(), INTESTAZIONI.length).setNumberFormat('@');
   lav.setColumnWidth(2, 220); lav.setColumnWidth(3, 260);
 
@@ -350,7 +466,7 @@ function leggiDb_() {
   var ss = SpreadsheetApp.getActive();
   var tz = ss.getSpreadsheetTimeZone();
   return {
-    lavori: leggiTabella_(ss.getSheetByName(FOGLIO_LAVORI), CAMPI, tz).filter(function (l) { return l.id; }),
+    lavori: leggiLavori_(ss.getSheetByName(FOGLIO_LAVORI), tz),
     storico: leggiTabella_(ss.getSheetByName(FOGLIO_STORICO), CAMPI_STORICO, tz),
     persone: leggiPersone_()
   };
@@ -363,6 +479,21 @@ function leggiTabella_(sh, campi, tz) {
     campi.forEach(function (c, i) { o[c] = valore_(r[i], c, tz); });
     return o;
   });
+}
+
+/* Legge i lavori in base ai nomi delle colonne, così funziona anche col foglio della versione 1 */
+function leggiLavori_(sh, tz) {
+  if (!sh || sh.getLastRow() < 2) return [];
+  var n = sh.getLastColumn();
+  var righe = sh.getRange(1, 1, sh.getLastRow(), n).getValues();
+  var campi = righe[0].map(function (h) { return COLONNE[String(h).trim()] || ''; });
+  return righe.slice(1).map(function (r) {
+    var o = {};
+    campi.forEach(function (c, i) {
+      if (c && (o[c] === undefined || o[c] === '')) o[c] = valore_(r[i], c, tz);
+    });
+    return o;
+  }).filter(function (l) { return l.id; }).map(normalizza);
 }
 
 function valore_(v, campo, tz) {
@@ -389,10 +520,19 @@ function leggiPersone_() {
 
 function scriviLavori_(lavori) {
   var sh = SpreadsheetApp.getActive().getSheetByName(FOGLIO_LAVORI);
+  var colonne = Math.max(sh.getLastColumn(), CAMPI.length);
   var vecchie = Math.max(sh.getLastRow() - 1, 0);
-  if (vecchie) sh.getRange(2, 1, vecchie, CAMPI.length).clearContent();
+  if (vecchie) sh.getRange(2, 1, vecchie, colonne).clearContent();
+  if (colonne > CAMPI.length) sh.getRange(1, CAMPI.length + 1, 1, colonne - CAMPI.length).clearContent();
+  sh.getRange(1, 1, 1, CAMPI.length).setValues([INTESTAZIONI]);
   if (!lavori.length) return;
-  var righe = lavori.map(function (l) { return CAMPI.map(function (c) { return l[c] == null ? '' : String(l[c]); }); });
+  var righe = lavori.map(function (l) {
+    return CAMPI.map(function (c) {
+      if (c === 'assegnati') return (l.assegnati || []).join(', ');
+      if (c === 'risposte') return JSON.stringify(l.risposte || {});
+      return l[c] == null ? '' : String(l[c]);
+    });
+  });
   sh.getRange(2, 1, righe.length, CAMPI.length).setNumberFormat('@').setValues(righe);
 }
 
@@ -418,8 +558,9 @@ function calendario_() {
 }
 
 function titoloEvento_(l) {
-  var t = (ICONE[l.stato] || '') + ' ' + l.titolo + ' · ' + l.assegnato;
-  if (l.stato === 'proposta' && l.propData) t += ' (propone ' + l.propData.split('-').reverse().slice(0, 2).join('/') + ')';
+  var t = (ICONE[l.stato] || '') + ' ' + l.titolo + ' · ' + l.assegnati.join(', ');
+  var conData = l.assegnati.filter(function (n) { return l.risposte[n].stato === 'proposta' && l.risposte[n].propData; });
+  if (l.stato === 'proposta' && conData.length) t += ' (' + conData[0] + ' propone ' + l.risposte[conData[0]].propData.split('-').reverse().slice(0, 2).join('/') + ')';
   return t;
 }
 
@@ -428,7 +569,11 @@ function descrizioneEvento_(l) {
   var righe = [];
   if (l.descrizione) righe.push(l.descrizione, '');
   righe.push('Stato: ' + (NOMI_STATO[l.stato] || l.stato));
-  righe.push('Per: ' + l.assegnato + ' · Creato da: ' + l.creatore);
+  righe.push('Creato da: ' + l.creatore);
+  l.assegnati.forEach(function (n) {
+    var r = l.risposte[n];
+    righe.push('• ' + n + ': ' + (ICONE[r.stato] || '') + ' ' + (NOMI_STATO[r.stato] || r.stato) + (r.nota ? ' — ' + r.nota : ''));
+  });
   if (l.nota) righe.push('Nota: ' + l.nota);
   if (link) righe.push('', 'Rispondi dall\'app: ' + link);
   return righe.join('\n');
@@ -543,7 +688,7 @@ function inviaNotifiche_(r, chi) {
     var a = email[n.a];
     if (!a) return;
     var t = testoNotifica_(n.tipo, chi, r.lavoro);
-    MailApp.sendEmail({ to: a, subject: t.oggetto, htmlBody: htmlEmail_(t, r.lavoro, imp['Link app']), name: 'Lavori di casa' });
+    MailApp.sendEmail({ to: a, subject: t.oggetto, htmlBody: htmlEmail_(t, r.lavoro, imp['Link app'], chi), name: 'Lavori di casa' });
   });
 }
 
@@ -558,26 +703,29 @@ function testoNotifica_(tipo, chi, l) {
     approvata: ['👍 Proposta accettata: ' + l.titolo, chi + ' ha accettato la tua proposta.'],
     respinta: ['↩️ Proposta non accettata: ' + l.titolo, chi + ' preferisce lasciare il lavoro com\'era.'],
     fatto: ['🎉 Fatto: ' + l.titolo, chi + ' ha segnato il lavoro come fatto.'],
-    eliminato: ['🗑️ Lavoro annullato: ' + l.titolo, chi + ' ha eliminato questo lavoro: non serve più farlo.']
+    eliminato: ['🗑️ Lavoro annullato: ' + l.titolo, chi + ' ha eliminato questo lavoro: non serve più farlo.'],
+    tolto: ['👋 Non sei più in questo lavoro: ' + l.titolo, chi + ' ha cambiato le persone del lavoro: non tocca più a te.']
   }[tipo] || ['Lavori di casa: ' + l.titolo, 'Novità su un lavoro.'];
   return { oggetto: T[0], intro: T[1] };
 }
 
-function htmlEmail_(t, l, link) {
+function htmlEmail_(t, l, link, chi) {
   function e(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>'); }
   var quando = l.data.split('-').reverse().join('/') + (l.ora ? ' alle ' + l.ora : '');
-  var prop = '';
-  if (l.stato === 'proposta') {
-    if (l.propData) prop += '<p><b>Nuovo giorno proposto:</b> ' + e(l.propData.split('-').reverse().join('/') + (l.propOra ? ' alle ' + l.propOra : '')) + '</p>';
-    if (l.propTitolo) prop += '<p><b>Nuova versione:</b> ' + e(l.propTitolo) + (l.propDescrizione ? '<br>' + e(l.propDescrizione) : '') + '</p>';
+  var prop = '', nota = l.nota;
+  var r = l.risposte && l.risposte[chi];
+  if (r) {
+    nota = r.nota;
+    if (r.propData) prop += '<p><b>Nuovo giorno proposto:</b> ' + e(r.propData.split('-').reverse().join('/') + (r.propOra ? ' alle ' + r.propOra : '')) + '</p>';
+    if (r.propTitolo) prop += '<p><b>Nuova versione:</b> ' + e(r.propTitolo) + (r.propDescrizione ? '<br>' + e(r.propDescrizione) : '') + '</p>';
   }
   return '<div style="font-family:Arial,sans-serif;max-width:520px;color:#1d2230">' +
     '<p>' + e(t.intro) + '</p>' +
     '<div style="background:#f3f4f8;border-radius:12px;padding:14px 16px;margin:12px 0">' +
     '<div style="font-size:18px;font-weight:bold">' + e(l.titolo) + '</div>' +
-    '<div style="color:#5b6275;margin-top:4px">📅 ' + e(quando) + ' · per ' + e(l.assegnato) + '</div>' +
+    '<div style="color:#5b6275;margin-top:4px">📅 ' + e(quando) + ' · per ' + e(l.assegnati.join(', ')) + '</div>' +
     (l.descrizione ? '<p>' + e(l.descrizione) + '</p>' : '') + prop +
-    (l.nota ? '<p style="font-style:italic">“' + e(l.nota) + '”</p>' : '') +
+    (nota ? '<p style="font-style:italic">“' + e(nota) + '”</p>' : '') +
     '</div>' +
     (link ? '<p><a href="' + link + '" style="display:inline-block;background:#7c8cff;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:bold">Apri l\'app e rispondi</a></p>' : '') +
     '</div>';
