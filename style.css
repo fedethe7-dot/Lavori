@@ -139,6 +139,9 @@ button { cursor: pointer; }
 .pill.s-altro { background: var(--alt-bg); color: var(--alt); }
 .pill.s-fatto { background: var(--done-bg); color: var(--done); }
 
+.box.hot { box-shadow: inset 0 0 0 2px var(--wait), var(--shadow); }
+.cal + .btn { margin-top: 10px; }
+
 /* Pulsanti */
 .btn { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; min-height: 54px; border: 0; border-radius: 16px; background: var(--card2); font-weight: 700; font-size: 1.05rem; padding: 10px 14px; margin: 8px 0 0; }
 .sheet .btn { background: var(--card); box-shadow: inset 0 0 0 1.5px var(--line); }

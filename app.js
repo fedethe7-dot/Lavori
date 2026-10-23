@@ -35,8 +35,8 @@ const S = {
   set(k, v) { try { localStorage.setItem('lavori2.' + k, JSON.stringify(v)); } catch (e) { /* niente */ } }
 };
 const cfg = { url: S.get('url', ''), pin: S.get('pin', ''), me: S.get('me', ''), tema: S.get('tema', 'auto') };
-const st = { lavori: [], persone: [], settimane: {}, eccezioni: {}, admin: '', view: S.get('view', 'cal'),
-  mese: null, giorno: null, soloMiei: false, fatti: false, chiLiberi: '', occupato: 0, caricato: 0 };
+const st = { lavori: [], persone: [], settimane: {}, eccezioni: {}, admin: '', view: ({ cal: 'liberi', list: 'home' })[S.get('view', 'home')] || S.get('view', 'home'),
+  mese: null, giorno: null, soloMiei: false, chiLiberi: '', occupato: 0, caricato: 0 };
 
 /* ---------- Utilità ---------- */
 const $ = s => document.querySelector(s);
@@ -179,16 +179,16 @@ function render() {
 
   let avv = '';
   const dr = daRispondere().length, pv = proposteDaVedere().length;
-  if (dr) avv += `<button class="banner hot" data-vai="list">📬 ${dr} da rispondere ›</button>`;
-  if (pv) avv += `<button class="banner hot" data-vai="list">🔔 ${pv} ${pv === 1 ? 'risposta' : 'risposte'} ›</button>`;
+  if (dr && st.view !== 'home') avv += `<button class="banner hot" data-vai="home">📬 ${dr} da rispondere ›</button>`;
+  if (pv && st.view !== 'home') avv += `<button class="banner hot" data-vai="home">🔔 ${pv} ${pv === 1 ? 'risposta' : 'risposte'} ›</button>`;
   if (!cfg.url) avv += `<button class="banner prova" data-go="imp">🧪 Prova · collega il foglio ›</button>`;
   $('#avvisi').innerHTML = avv;
 
   document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('active', x.dataset.view === st.view));
-  $('#fab').classList.toggle('hidden', st.view === 'liberi');
-  if (st.view === 'list') renderLista();
-  else if (st.view === 'liberi') renderLiberi();
-  else renderCal();
+  $('#fab').classList.toggle('hidden', st.view === 'fatti');
+  if (st.view === 'liberi') renderLiberi();
+  else if (st.view === 'fatti') renderFatti();
+  else renderHome();
 }
 
 /* Pallino della disponibilità: pieno, metà sopra (mattina), metà sotto (pomeriggio) */
@@ -196,7 +196,63 @@ function pallino(n, v) {
   return `<i class="dot ${LIB[v || ''].c}" style="--c:${esc(persona(n).colore)}"></i>`;
 }
 
-function renderCal() {
+function riga(j, conGiorno) {
+  const s = STATO[j.fatto ? 'fatto' : j.stato];
+  const mia = j.risposte[cfg.me];
+  const tocca = !j.fatto && mia && j.creatore !== cfg.me && mia.r === 'attesa';
+  const quando = (conGiorno ? giornoBreve(j.data) + ' · ' : '') + quandoTesto(j);
+  return `<button class="job ${s.c} ${j.fatto ? 'done' : ''}" data-id="${esc(j.id)}">
+    <span class="job-em">${esc(j.emoji)}</span>
+    <span class="job-main"><span class="job-t">${esc(j.titolo)}</span>
+      <span class="job-m">${esc(quando)} · ${j.assegnati.map(n => av(n, 'sm')).join('')}</span>
+      ${tocca ? '<span class="tocca">👉 Tocca a te rispondere</span>' : ''}</span>
+    <span class="pill ${s.c}">${s.i}</span></button>`;
+}
+const mio = j => j.assegnati.includes(cfg.me) || j.creatore === cfg.me;
+function filtroMiei() {
+  return `<div class="seg big2">
+    <button class="${!st.soloMiei ? 'on' : ''}" data-miei="0">👨‍👩‍👧 Tutti</button>
+    <button class="${st.soloMiei ? 'on' : ''}" data-miei="1">🙋 Solo i miei</button></div>`;
+}
+/* lavori raggruppati per giorno */
+function perGiorni(arr) {
+  const t = oggi();
+  let h = '', ultimo = null;
+  arr.forEach(j => {
+    if (j.data !== ultimo) {
+      ultimo = j.data;
+      h += `<div class="when-h">${esc(giornoLungo(j.data))}${j.data === t ? ' · <span class="tag">oggi</span>' : j.data < t && !j.fatto ? ' · <span class="late">passato</span>' : ''}</div>`;
+    }
+    h += riga(j);
+  });
+  return h;
+}
+
+/* ---------- 🏠 Home: i lavori da fare ---------- */
+function renderHome() {
+  const L = st.lavori.filter(j => !j.fatto && (!st.soloMiei || mio(j)));
+  const dr = daRispondere().sort(ordina), pv = proposteDaVedere().sort(ordina);
+  const sopra = new Set([...dr, ...pv].map(j => j.id));
+  const prossimi = L.filter(j => !sopra.has(j.id)).sort(ordina);
+  let h = filtroMiei();
+  if (dr.length) h += `<div class="box hot"><div class="box-t">📬 Da rispondere</div>${dr.map(j => riga(j, true)).join('')}</div>`;
+  if (pv.length) h += `<div class="box hot"><div class="box-t">🔔 Risposte da vedere</div>${pv.map(j => riga(j, true)).join('')}</div>`;
+  if (prossimi.length) h += `<div class="box"><div class="box-t">🧰 Lavori da fare</div>${perGiorni(prossimi)}</div>`;
+  if (!dr.length && !pv.length && !prossimi.length) h += '<div class="empty big">Niente da fare 🎉<br><span class="muted">Tocca ＋ per aggiungere un lavoro</span></div>';
+  $('#main').innerHTML = h;
+}
+
+/* ---------- ✔️ Fatti ---------- */
+function renderFatti() {
+  const L = st.lavori.filter(j => j.fatto && (!st.soloMiei || mio(j))).sort((a, b) => ordina(b, a));
+  let h = filtroMiei();
+  h += L.length ? `<div class="box"><div class="box-t">✔️ Lavori fatti <span class="muted small">(ultimi 2 mesi)</span></div>${perGiorni(L)}</div>`
+    : '<div class="empty big">Ancora nessun lavoro fatto 💪</div>';
+  $('#main').innerHTML = h;
+}
+
+/* ---------- 🙋 Giorni liberi: calendario con chi è libero ---------- */
+function renderLiberi() {
   if (!st.mese) { const d = new Date(); st.mese = new Date(d.getFullYear(), d.getMonth(), 1); }
   if (!st.giorno) st.giorno = oggi();
   const m = st.mese, t = oggi();
@@ -219,84 +275,66 @@ function renderCal() {
     h += `<button class="cell ${d.getMonth() !== m.getMonth() ? 'out' : ''} ${k === t ? 'today' : ''} ${k === st.giorno ? 'sel' : ''} ${k < t ? 'past' : ''}" data-giorno="${k}">
       <span class="n">${d.getDate()}</span><span class="ems">${em}</span><span class="dots">${dots}</span></button>`;
   }
-  h += `</div><div class="legenda"><span><i class="dot l-tutto"></i>tutto il giorno</span><span><i class="dot l-mattina"></i>mattina</span><span><i class="dot l-pomeriggio"></i>pomeriggio</span></div></div>`;
+  h += `</div><div class="legenda"><span><i class="dot l-tutto"></i>tutto il giorno</span><span><i class="dot l-mattina"></i>mattina</span><span><i class="dot l-pomeriggio"></i>pomeriggio</span></div>
+    <div class="legenda">${st.persone.map(p => `<span><i class="dot l-tutto" style="--c:${esc(persona(p.nome).colore)}"></i>${esc(p.nome)}</span>`).join('')}</div></div>
+    <button class="btn" data-settimana>📆 La mia settimana tipo</button>`;
 
-  // il giorno scelto
   const g = st.giorno;
   h += `<section class="day"><div class="day-h"><h2>${esc(giornoLungo(g))}</h2>${g === t ? '<span class="tag">oggi</span>' : `<button class="chip-btn" data-oggi>Torna a oggi</button>`}</div>
     <div class="box"><div class="box-t">🙋 Chi è libero</div>
     ${st.persone.map(p => {
-      const v = liberoDi(p.nome, g), mio = p.nome === cfg.me || sonoCapo();
-      const ecc = ((st.eccezioni[p.nome] || {})[g]) ? ' <span class="muted small">(oggi diverso)</span>' : '';
-      return `<${mio ? 'button' : 'div'} class="free-row" ${mio ? `data-ecc="${esc(p.nome)}"` : ''}>${av(p.nome)}<b>${esc(p.nome)}</b>${ecc}
-        <span class="lib ${LIB[v].c}">${LIB[v].i} ${LIB[v].t}</span>${mio ? '<span class="edit">✏️</span>' : ''}</${mio ? 'button' : 'div'}>`;
+      const v = liberoDi(p.nome, g), puo = p.nome === cfg.me || sonoCapo();
+      const ecc = ((st.eccezioni[p.nome] || {})[g]) ? ' <span class="muted small">(diverso dal solito)</span>' : '';
+      return `<${puo ? 'button' : 'div'} class="free-row" ${puo ? `data-ecc="${esc(p.nome)}"` : ''}>${av(p.nome)}<b>${esc(p.nome)}${ecc}</b>
+        <span class="lib ${LIB[v].c}">${LIB[v].i} ${LIB[v].t}</span>${puo ? '<span class="edit">✏️</span>' : ''}</${puo ? 'button' : 'div'}>`;
     }).join('') || '<div class="muted">Nessuna persona</div>'}</div>
-    <div class="box"><div class="box-t">🧰 Lavori</div>
-    ${(per[g] || []).map(riga).join('') || '<div class="empty">Nessun lavoro in questo giorno 😌</div>'}
+    <div class="box"><div class="box-t">🧰 Lavori del giorno</div>
+    ${(per[g] || []).map(j => riga(j)).join('') || '<div class="empty">Nessun lavoro in questo giorno 😌</div>'}
     <button class="btn add" data-nuovo="${g}">➕ Aggiungi un lavoro</button></div></section>`;
   $('#main').innerHTML = h;
 }
 
-function riga(j) {
-  const s = STATO[j.fatto ? 'fatto' : j.stato];
-  const mia = j.risposte[cfg.me];
-  const tocca = !j.fatto && mia && j.creatore !== cfg.me && mia.r === 'attesa';
-  return `<button class="job ${s.c} ${j.fatto ? 'done' : ''}" data-id="${esc(j.id)}">
-    <span class="job-em">${esc(j.emoji)}</span>
-    <span class="job-main"><span class="job-t">${esc(j.titolo)}</span>
-      <span class="job-m">${esc(quandoTesto(j))} · ${j.assegnati.map(n => av(n, 'sm')).join('')}</span>
-      ${tocca ? '<span class="tocca">👉 Tocca a te rispondere</span>' : ''}</span>
-    <span class="pill ${s.c}">${s.i}</span></button>`;
-}
-
-function renderLista() {
-  const t = oggi();
-  const mio = j => j.assegnati.includes(cfg.me) || j.creatore === cfg.me;
-  const L = st.lavori.filter(j => !st.soloMiei || mio(j));
-  const dr = daRispondere(), pv = proposteDaVedere();
-  const giaSopra = new Set([...dr, ...pv].map(j => j.id));
-  const prossimi = L.filter(j => !j.fatto && !giaSopra.has(j.id)).sort(ordina);
-  const fatti = L.filter(j => j.fatto).sort((a, b) => ordina(b, a));
-  const gruppo = (tit, arr, conGiorno = true) => arr.length ? `<div class="box"><div class="box-t">${tit}</div>${arr.map(j =>
-    (conGiorno ? `<div class="when-h">${esc(giornoBreve(j.data))}${j.data < t && !j.fatto ? ' · <span class="late">passato</span>' : ''}</div>` : '') + riga(j)).join('')}</div>` : '';
-  let h = `<div class="seg big2">
-    <button class="${!st.soloMiei ? 'on' : ''}" data-miei="0">👨‍👩‍👧 Tutti</button>
-    <button class="${st.soloMiei ? 'on' : ''}" data-miei="1">🙋 Solo i miei</button></div>`;
-  h += gruppo('📬 Da rispondere', dr.sort(ordina));
-  h += gruppo('🔔 Risposte da vedere', pv.sort(ordina));
-  h += gruppo('🔜 Prossimi lavori', prossimi);
-  if (!dr.length && !pv.length && !prossimi.length) h += '<div class="empty big">Niente da fare 🎉<br><span class="muted">Tocca ＋ per aggiungere un lavoro</span></div>';
-  if (fatti.length) {
-    h += `<button class="btn ghost" data-fatti>${st.fatti ? '🙈 Nascondi i lavori fatti' : `✔️ Mostra i lavori fatti (${fatti.length})`}</button>`;
-    if (st.fatti) h += gruppo('✔️ Fatti', fatti);
-  }
-  $('#main').innerHTML = h;
-}
-
-/* ---------- Giorni liberi ---------- */
-function renderLiberi() {
+/* ---------- 📆 Settimana tipo (pannello) ---------- */
+function htmlSettimana() {
   const capo = sonoCapo();
   const chi = (capo && st.chiLiberi) || cfg.me;
-  if (!chi) { $('#main').innerHTML = '<div class="empty big">Prima dimmi chi sei ⚙️</div>'; return; }
   const sett = (st.settimane[chi] || []).concat(['', '', '', '', '', '', '']).slice(0, 7);
-  let h = '';
-  if (capo) h += `<div class="chips center">${st.persone.map(p => `<button class="chip ${p.nome === chi ? 'on' : ''}" data-chi-liberi="${esc(p.nome)}">${av(p.nome, 'xs')} ${esc(p.nome)}</button>`).join('')}</div>`;
-  h += `<div class="box"><div class="box-t">📆 ${chi === cfg.me ? 'La mia settimana tipo' : 'Settimana tipo di ' + esc(chi)}</div>
-    <div class="muted small">Quando sei libero di solito? Tocca per cambiare, si salva da solo.</div>
+  let h = testata('📆 Settimana tipo');
+  if (capo) h += `<div class="chips">${st.persone.map(p => `<button type="button" class="chip ${p.nome === chi ? 'on' : ''}" data-chi-liberi="${esc(p.nome)}">${av(p.nome, 'xs')} ${esc(p.nome)}</button>`).join('')}</div>`;
+  h += `<div class="box"><div class="box-t">${chi === cfg.me ? '🙋 Quando sei libero di solito?' : '🙋 ' + esc(chi)}</div>
+    <div class="muted small">Tocca per cambiare, si salva da solo.</div>
     ${GIORNI.map((g, i) => `<div class="wk-row"><div class="wk-d">${g}</div><div class="seg">${['tutto', 'mattina', 'pomeriggio', 'no'].map(v =>
-      `<button class="${sett[i] === v ? 'on ' + LIB[v].c : ''}" data-sett="${i}" data-v="${v}" aria-label="${LIB[v].t}"><span>${LIB[v].i}</span><small>${v === 'tutto' ? 'Tutto' : v === 'no' ? 'No' : LIB[v].t}</small></button>`).join('')}</div></div>`).join('')}
+      `<button type="button" class="${sett[i] === v ? 'on ' + LIB[v].c : ''}" data-sett="${i}" data-v="${v}" aria-label="${LIB[v].t}"><span>${LIB[v].i}</span><small>${v === 'tutto' ? 'Tutto' : v === 'no' ? 'No' : LIB[v].t}</small></button>`).join('')}</div></div>`).join('')}
   </div>`;
   const ecc = st.eccezioni[chi] || {};
   const giorni = Object.keys(ecc).filter(d => d >= oggi()).sort();
   h += `<div class="box"><div class="box-t">📌 Giorni diversi dal solito</div>
     ${giorni.map(d => `<div class="free-row"><b>${esc(giornoBreve(d))}</b><span class="lib ${LIB[ecc[d]].c}">${LIB[ecc[d]].i} ${LIB[ecc[d]].t}</span>
-      <button class="x sm" data-via-ecc="${d}" aria-label="Togli">×</button></div>`).join('') || '<div class="muted">Nessuno. Puoi segnarli anche toccando il tuo nome nel calendario.</div>'}
-    <button class="btn" data-nuova-ecc>➕ Segna un giorno diverso</button></div>`;
+      <button type="button" class="x sm" data-via-ecc="${d}" aria-label="Togli">×</button></div>`).join('') || '<div class="muted">Nessuno. Puoi segnarli anche toccando il tuo nome sotto il calendario.</div>'}
+    <button type="button" class="btn" data-nuova-ecc>➕ Segna un giorno diverso</button></div>`;
   h += `<div class="box"><div class="box-t">👨‍👩‍👧 La famiglia</div><div class="fam">
     <div></div>${GIORNI.map(g => `<div class="fam-h">${g.slice(0, 3)}</div>`).join('')}
     ${st.persone.map(p => `<div class="fam-n">${av(p.nome, 'xs')}</div>${(st.settimane[p.nome] || []).concat(['', '', '', '', '', '', '']).slice(0, 7).map(v => `<div class="fam-c">${LIB[v || ''].i}</div>`).join('')}`).join('')}
   </div></div>`;
-  $('#main').innerHTML = h;
+  return h;
+}
+function apriSettimana() {
+  if (!cfg.me) return apriImpostazioni('Prima dimmi chi sei 🙋');
+  apriPannello(htmlSettimana());
+  $('#sheet').onclick = async e => {
+    const t = e.target, q = s => t.closest(s);
+    let x;
+      if ((x = q('[data-chi-liberi]'))) { st.chiLiberi = x.dataset.chiLiberi; return aggiornaSettimana(); }
+      if ((x = q('[data-via-ecc]'))) {
+      if (await azione({ action: 'eccezione', nome: (sonoCapo() && st.chiLiberi) || cfg.me, data: x.dataset.viaEcc, valore: '' }, 'Tolto 👍')) aggiornaSettimana();
+    }
+  };
+}
+function aggiornaSettimana() {
+  if ($('#sheetBg').classList.contains('hidden')) return;
+  const sh = $('#sheet'), y = sh.scrollTop;
+  sh.innerHTML = htmlSettimana();
+  sh.scrollTop = y;
 }
 
 let timerSett = null;
@@ -305,7 +343,7 @@ function cambiaSettimana(i, v) {
   const s = (st.settimane[chi] || []).concat(['', '', '', '', '', '', '']).slice(0, 7);
   s[i] = s[i] === v ? '' : v;
   st.settimane[chi] = s;
-  render();
+  aggiornaSettimana();
   clearTimeout(timerSett);
   timerSett = setTimeout(() => azione({ action: 'settimana', nome: chi, settimana: st.settimane[chi] }, 'Settimana salvata 👍'), 900);
 }
@@ -625,12 +663,8 @@ document.addEventListener('click', e => {
   if (q('[data-oggi]')) { const d = new Date(); st.mese = new Date(d.getFullYear(), d.getMonth(), 1); st.giorno = oggi(); return render(); }
   if ((x = q('[data-nuovo]'))) return formLavoro(null, x.dataset.nuovo);
   if ((x = q('[data-ecc]'))) return formEccezione(x.dataset.ecc, st.giorno);
+  if (q('[data-settimana]')) return apriSettimana();
   if ((x = q('[data-miei]'))) { st.soloMiei = x.dataset.miei === '1'; return render(); }
-  if (q('[data-fatti]')) { st.fatti = !st.fatti; return render(); }
-  if ((x = q('[data-sett]'))) return cambiaSettimana(Number(x.dataset.sett), x.dataset.v);
-  if ((x = q('[data-chi-liberi]'))) { st.chiLiberi = x.dataset.chiLiberi; return render(); }
-  if (q('[data-nuova-ecc]')) return formEccezione((sonoCapo() && st.chiLiberi) || cfg.me, oggi());
-  if ((x = q('[data-via-ecc]'))) return azione({ action: 'eccezione', nome: (sonoCapo() && st.chiLiberi) || cfg.me, data: x.dataset.viaEcc, valore: '' }, 'Tolto 👍');
 });
 function cambiaMese(n) { st.mese = new Date(st.mese.getFullYear(), st.mese.getMonth() + n, 1); render(); }
 
@@ -644,7 +678,7 @@ document.addEventListener('touchend', e => {
   if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) cambiaMese(dx < 0 ? 1 : -1);
 }, { passive: true });
 
-$('#fab').onclick = () => formLavoro(null, st.view === 'cal' ? st.giorno : oggi());
+$('#fab').onclick = () => formLavoro(null, st.view === 'liberi' ? st.giorno : oggi());
 $('#btnSync').onclick = () => carica();
 $('#btnMe').onclick = () => apriImpostazioni();
 // riaprendo l'app si aggiorna da sola (al massimo una volta al minuto)
