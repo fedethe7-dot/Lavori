@@ -11,6 +11,17 @@
 var FASCE = ['tutto', 'mattina', 'pomeriggio', 'no'];
 var QUANDO = ['giornata', 'mattina', 'pomeriggio', 'ora'];
 var ORE_FASCIA = { mattina: '09:00', pomeriggio: '15:00' };
+/* Notifiche: ognuno sceglie quali ricevere e in che orari */
+var NOTIFICHE_BASE = { nuovi: true, risposte: true, fatti: false, giornoPrima: true, orePrima: 2, dalle: 8, alle: 22 };
+function preferenze(db, nome) {
+  var p = ((db.preferenze || {})[nome]) || {}, out = {};
+  Object.keys(NOTIFICHE_BASE).forEach(function (k) { out[k] = p[k] === undefined || p[k] === '' ? NOTIFICHE_BASE[k] : p[k]; });
+  ['nuovi', 'risposte', 'fatti', 'giornoPrima'].forEach(function (k) { out[k] = out[k] === true || out[k] === 'true' || out[k] === 'SÌ'; });
+  ['orePrima', 'dalle', 'alle'].forEach(function (k) { out[k] = Number(out[k]) || 0; });
+  if (!out.dalle) out.dalle = 0;
+  if (!out.alle || out.alle <= out.dalle) out.alle = 24;
+  return out;
+}
 
 function nuovoId() {
   return 'L' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -202,6 +213,15 @@ function applica(db, p, adesso) {
       return { lavoro: null, notifiche: [], calendario: null };
     }
 
+    case 'notifiche': {                      // le proprie preferenze di notifica
+      db.preferenze = db.preferenze || {};
+      var pr = {};
+      Object.keys(NOTIFICHE_BASE).forEach(function (k) { if (p.preferenze && p.preferenze[k] !== undefined) pr[k] = p.preferenze[k]; });
+      db.preferenze[chi] = pr;
+      db.preferenze[chi] = preferenze(db, chi);
+      return { lavoro: null, notifiche: [], calendario: null };
+    }
+
     case 'eccezione': {                      // un giorno diverso dal solito
       var nm = _t(p.nome) || chi;
       if (nm !== chi && !capo) throw new Error('Puoi cambiare solo i tuoi giorni');
@@ -223,5 +243,5 @@ function applica(db, p, adesso) {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { applica: applica, normalizza: normalizza, statoLavoro: statoLavoro, libero: libero,
-    liberaPer: liberaPer, fasciaLavoro: fasciaLavoro, giornoSett: giornoSett, FASCE: FASCE, ORE_FASCIA: ORE_FASCIA };
+    liberaPer: liberaPer, fasciaLavoro: fasciaLavoro, preferenze: preferenze, NOTIFICHE_BASE: NOTIFICHE_BASE, giornoSett: giornoSett, FASCE: FASCE, ORE_FASCIA: ORE_FASCIA };
 }

@@ -1,7 +1,7 @@
 'use strict';
 /* Lavori di casa v2 — interfaccia */
 
-const VERSIONE = '2.0';
+const VERSIONE = '2.1';
 const EMOJI = ['🧹', '🌿', '🛒', '🔧', '💡', '🧺', '🍽️', '🚗', '🐶', '🗑️', '📦', '🧽', '🪴', '🛠️', '🧯', '📋'];
 const STATO = {
   attesa: { t: 'In attesa', i: '⏳', c: 's-attesa' },
@@ -164,6 +164,8 @@ function usa(d, daCache) {
   st.settimane = d.settimane || {};
   st.eccezioni = d.eccezioni || {};
   st.admin = d.admin || '';
+  st.preferenze = d.preferenze || {};
+  st.telefoni = d.telefoni || {};
   if (!daCache) { st.caricato = Date.now(); if (cfg.url) S.set('cache', d); }
   render();
   badge();
@@ -566,6 +568,7 @@ function apriImpostazioni(msg) {
         <label>PIN di famiglia<input name="pin" type="password" inputmode="numeric" value="${esc(cfg.pin)}"></label>
         <div class="err" id="err"></div></div>
       <button class="btn main big" type="submit">💾 Salva</button>
+      ${cfg.url && cfg.me ? '<button class="btn" type="button" id="btnNotifiche">🔔 Notifiche</button>' : ''}
       ${cfg.url ? '<button class="btn" type="button" id="btnInvito">📲 Copia il link per la famiglia</button>' : ''}
       ${prova ? '<button class="btn ghost" type="button" id="btnReset">🧪 Ricomincia con i dati di prova</button>' : ''}
       <div class="muted small center">Lavori di casa · versione ${VERSIONE}</div>
@@ -586,6 +589,8 @@ function apriImpostazioni(msg) {
     };
     $('#btnReset').onclick = () => { if (confirm('Cancellare i dati di prova?')) { S.set('prova', null); carica(); chiudiPannello(); } };
   }
+  const bn = $('#btnNotifiche');
+  if (bn) bn.onclick = () => apriNotifiche();
   const inv = $('#btnInvito');
   if (inv) inv.onclick = async () => {
     const link = location.origin + location.pathname + '#collega=' + encodeURIComponent(btoa(unescape(encodeURIComponent(JSON.stringify({ u: cfg.url, p: cfg.pin })))));
@@ -610,6 +615,102 @@ function apriImpostazioni(msg) {
     toast(nuovi ? 'Collegato al foglio ✅' : 'Salvato 👍');
   };
 }
+/* ---------- 🔔 Notifiche vere (Firebase) ---------- */
+const FB = 'https://www.gstatic.com/firebasejs/10.14.1/';
+const pushPronto = () => !!(self.FIREBASE_CONFIG && self.FIREBASE_CONFIG.apiKey && self.FIREBASE_VAPID);
+const pushSupportato = () => 'Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window;
+let messaggi = null;
+function carScript(src) {
+  return new Promise((ok, ko) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => ko(new Error('Non riesco a caricare le notifiche')); document.head.appendChild(s); });
+}
+async function firebasePronto() {
+  if (messaggi) return messaggi;
+  if (!window.firebase) { await carScript(FB + 'firebase-app-compat.js'); await carScript(FB + 'firebase-messaging-compat.js'); }
+  if (!firebase.apps.length) firebase.initializeApp(self.FIREBASE_CONFIG);
+  messaggi = firebase.messaging();
+  messaggi.onMessage(m => {                       // con l'app aperta: avviso in alto e dati aggiornati
+    const n = m.notification || {};
+    toast(`${n.title || '🔔'} — ${n.body || ''}`);
+    carica(true);
+  });
+  return messaggi;
+}
+async function prendiToken() {
+  const m = await firebasePronto();
+  const reg = await navigator.serviceWorker.ready;
+  return m.getToken({ vapidKey: self.FIREBASE_VAPID, serviceWorkerRegistration: reg });
+}
+async function attivaPush() {
+  if (!pushPronto()) throw new Error('Notifiche non ancora configurate 🛠️');
+  if (!pushSupportato()) throw new Error('Questo browser non supporta le notifiche: apri l\'app da Chrome');
+  const per = await Notification.requestPermission();
+  if (per !== 'granted') throw new Error('Notifiche bloccate: abilitale dalle impostazioni del telefono per questa app');
+  const token = await prendiToken();
+  if (!token) throw new Error('Non sono riuscito a registrare il telefono');
+  if (!await azione({ action: 'dispositivo', token }, 'Notifiche attive su questo telefono ✅')) return false;
+  S.set('push.' + cfg.me, token);
+  return true;
+}
+/* all'avvio: se il telefono è già registrato, ascolta le notifiche e aggiorna il token se è cambiato */
+async function controllaPush() {
+  if (!cfg.url || !cfg.me || !pushPronto() || !pushSupportato() || Notification.permission !== 'granted') return;
+  try {
+    const token = await prendiToken();
+    if (token && token !== S.get('push.' + cfg.me, '')) {
+      await azione({ action: 'dispositivo', token });
+      S.set('push.' + cfg.me, token);
+    }
+  } catch (e) { /* riproverà la prossima volta */ }
+}
+
+function apriNotifiche() {
+  const p = Object.assign({ nuovi: true, risposte: true, fatti: false, giornoPrima: true, orePrima: 2, dalle: 8, alle: 22 }, st.preferenze[cfg.me] || {});
+  const attivo = typeof Notification !== 'undefined' && Notification.permission === 'granted' && S.get('push.' + cfg.me, '');
+  const tel = st.telefoni[cfg.me] || 0;
+  const interr = (k, t) => `<label class="sw"><input type="checkbox" name="${k}" ${p[k] ? 'checked' : ''}><span>${t}</span></label>`;
+  const ore = (nome, da, a, v) => `<select name="${nome}">${Array.from({ length: a - da + 1 }, (_, i) => da + i).map(h => `<option value="${h}" ${Number(v) === h ? 'selected' : ''}>${h === 24 ? 'mezzanotte' : h + ':00'}</option>`).join('')}</select>`;
+  apriPannello(`${testata('🔔 Notifiche')}
+    ${!pushPronto() ? '<div class="banner">🛠️ Le notifiche sono quasi pronte: manca l\'ultimo passaggio su Firebase.</div>' : ''}
+    <div class="box"><div class="box-t">📱 Questo telefono</div>
+      <div>${attivo ? '✅ Le notifiche arrivano qui' : '🔕 Su questo telefono non sono attive'}</div>
+      <div class="muted small">${tel ? `Telefoni collegati a ${esc(cfg.me)}: ${tel}` : 'Nessun telefono collegato: per ora ricevi le email'}</div>
+      <button class="btn ${attivo ? '' : 'main'}" type="button" data-a="attiva">${attivo ? '🔄 Ricollega questo telefono' : '🔔 Attiva le notifiche'}</button>
+      ${tel ? '<button class="btn" type="button" data-a="prova">📨 Manda una notifica di prova</button>' : ''}
+    </div>
+    <form id="fn">
+      <div class="box"><div class="box-t">📬 Quali ricevere</div>
+        ${interr('nuovi', '📋 Nuovi lavori e lavori spostati')}
+        ${interr('risposte', '💬 Risposte ai miei lavori')}
+        ${interr('fatti', '🎉 Quando un mio lavoro è fatto')}
+        ${interr('giornoPrima', '⏰ Promemoria il giorno prima')}
+        <label>⏰ Promemoria poco prima<select name="orePrima">${[[0, 'No'], [1, '1 ora prima'], [2, '2 ore prima'], [3, '3 ore prima'], [4, '4 ore prima']].map(([v, t]) => `<option value="${v}" ${Number(p.orePrima) === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      </div>
+      <div class="box"><div class="box-t">🌙 Solo in questi orari</div>
+        <div class="row2"><label>Dalle${ore('dalle', 5, 12, p.dalle)}</label><label>Alle${ore('alle', 18, 24, p.alle)}</label></div>
+        <div class="muted small">Fuori orario le notifiche aspettano e arrivano all'inizio dell'orario. Il promemoria del giorno prima arriva all'ora di inizio.</div>
+      </div>
+      <button class="btn main big" type="submit">💾 Salva</button>
+    </form>`);
+  $('#sheet').onclick = async e => {
+    const b = e.target.closest('[data-a]');
+    if (!b) return;
+    if (b.dataset.a === 'attiva') {
+      b.disabled = true;
+      try { if (await attivaPush()) apriNotifiche(); } catch (ex) { toast(ex.message, true); }
+      b.disabled = false;
+    } else if (b.dataset.a === 'prova') {
+      await azione({ action: 'prova' }, 'Notifica mandata 📨');
+    }
+  };
+  const f = $('#fn');
+  f.onsubmit = async e => {
+    e.preventDefault();
+    const pr = { nuovi: f.nuovi.checked, risposte: f.risposte.checked, fatti: f.fatti.checked, giornoPrima: f.giornoPrima.checked,
+      orePrima: Number(f.orePrima.value), dalle: Number(f.dalle.value), alle: Number(f.alle.value) };
+    if (await azione({ action: 'notifiche', preferenze: pr }, 'Notifiche salvate 👍')) chiudiPannello();
+  };
+}
+
 function leggiInvito() {
   const m = location.hash.match(/collega=([^&]+)/);
   if (!m) return false;
@@ -694,5 +795,5 @@ document.addEventListener('visibilitychange', () => {
   if (c) usa(c, true); else render();
   await carica(!!cfg.url && !invito);
   if (!cfg.me || !st.persone.some(p => p.nome === cfg.me)) apriImpostazioni(invito ? 'Benvenuto! 👋 Scegli chi sei.' : 'Per iniziare dimmi chi sei 🙋');
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').then(() => controllaPush()).catch(() => {});
 })();

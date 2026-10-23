@@ -7,8 +7,9 @@ App semplice per dividere i lavori di casa in famiglia.
 - ➕ **Nuovo lavoro**: emoji, cosa fare, giorno, quando (in giornata / mattina / pomeriggio / a un'ora) e per chi. Accanto a ogni persona vedi se quel giorno è libera.
 - ✅ ❌ 📅 **Risposte**: ognuno dice *Ci sto*, *Non posso* o propone *Un altro giorno*. Chi ha creato il lavoro lo sposta con un tocco.
 - ✔️ Alla fine si segna **fatto**.
-- 🔔 **Promemoria** nel calendario Google "Lavori di casa": il giorno prima alle 8 e 2 ore prima, sempre tra le 8 e le 22.
-- 📧 Email solo per lavori nuovi, spostati, eliminati e per le risposte (si possono spegnere).
+- 🔔 **Notifiche vere sul telefono** (Firebase): nuovi lavori, risposte, lavori fatti, promemoria il giorno prima e qualche ora prima. Ognuno sceglie quali ricevere e in che orari (di base dalle 8 alle 22).
+- 🗓️ I lavori vengono copiati nel calendario Google "Lavori di casa" (solo copia: l'app non lo rilegge, così è veloce).
+- 📧 Chi non ha attivato le notifiche riceve un'email (si può spegnere).
 - 🎨 Chiara o scura: segue il telefono, oppure la scegli dalle impostazioni.
 
 I dati stanno solo nel foglio Google, protetto dal PIN di famiglia: in questo repository non c'è nessun dato.
@@ -33,13 +34,14 @@ I dati stanno solo nel foglio Google, protetto dal PIN di famiglia: in questo re
 7. Dalle impostazioni tocca **Copia il link per la famiglia** e mandalo nel gruppo: aprendolo, l'app si collega da sola.
 8. In Google Calendar → impostazioni del calendario "Lavori di casa" → **Condividi con persone specifiche** (mamma e sorella).
 
-## 🔔 Promemoria per mamma e sorella
+## 🔔 Notifiche (Firebase, una volta sola)
 
-Sul calendario condiviso Google usa le notifiche di ognuno, quindi vanno impostate una volta sola dal loro telefono:
+1. Progetto Firebase "Lavori di casa" con un'app Web: i dati pubblici (`firebaseConfig` e la chiave dei *Certificati push web*) vanno in `firebase-config.js`.
+2. Firebase → Impostazioni progetto → **Account di servizio** → *Genera nuova chiave privata*: il file JSON è **segreto**. Il suo contenuto va incollato in Apps Script → ⚙️ Impostazioni progetto → **Proprietà script** con il nome `FIREBASE_KEY`. Mai nel repository.
+3. Lo script controlla coda e promemoria ogni 15 minuti (lo attiva `setup`, oppure il menu 📋 Lavori → *Attiva le notifiche*).
+4. Ognuno, dall'app: ⚙️ → **🔔 Notifiche** → *Attiva le notifiche* (meglio con l'app installata sulla schermata Home).
 
-1. App **Google Calendar** → ☰ → **Impostazioni** → **Lavori di casa**.
-2. **Notifiche evento**: aggiungi *2 ore prima*.
-3. **Notifiche eventi di tutto il giorno**: aggiungi *1 giorno prima alle 08:00*.
+Per evitare doppioni, gli eventi nel calendario Google non hanno più promemoria propri: arrivano come notifiche dell'app.
 
 ## Aggiornamenti
 

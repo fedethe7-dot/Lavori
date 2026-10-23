@@ -230,6 +230,13 @@ button { cursor: pointer; }
 .p-wrap .btn { margin-left: 44px; width: calc(100% - 44px); }
 .actions { margin-top: 6px; }
 
+/* Interruttori */
+.sw { display: flex !important; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; margin: 0 !important; border-bottom: 1px solid var(--line); font-weight: 600 !important; min-height: 54px; cursor: pointer; }
+.sw input { appearance: none; -webkit-appearance: none; flex: none; order: 2; width: 54px; height: 32px; border-radius: 999px; background: var(--line); position: relative; margin: 0; transition: background .15s; }
+.sw input::after { content: ''; position: absolute; top: 3px; left: 3px; width: 26px; height: 26px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: transform .15s; }
+.sw input:checked { background: var(--ok); }
+.sw input:checked::after { transform: translateX(22px); }
+
 /* Moduli */
 form label, .lbl { display: block; font-weight: 700; margin: 12px 0 0; font-size: 1rem; }
 input:not([type=radio]):not([type=checkbox]), select, textarea {
