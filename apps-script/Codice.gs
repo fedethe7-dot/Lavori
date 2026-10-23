@@ -1,190 +1,148 @@
-/* Lavori di casa — Codice.gs v1.1 (regole + server). Incolla tutto questo nell'editor Apps Script. */
+/* Lavori di casa — Codice.gs v2.0 (regole + server). Incolla TUTTO questo nell'editor Apps Script. */
 
 /*
- * Lavori di casa — regole dei lavori.
- * Questo stesso file gira sia nell'app (modalità prova) sia nell'Apps Script del foglio,
- * così le regole sono identiche nei due posti.
+ * Lavori di casa v2 — le regole.
+ * Questo file gira sia nell'app (modalità prova) sia nell'Apps Script del foglio.
  *
- * Un lavoro può essere per una o più persone (assegnati). Ognuna risponde per conto suo:
- *   attesa    -> deve ancora rispondere
- *   accettato -> ha detto sì
- *   rifiutato -> ha detto che non può
- *   proposta  -> propone un altro giorno o una modifica
- * Lo stato del lavoro si calcola dalle risposte; "fatto" chiude il lavoro.
+ * Lavoro:   per una o più persone, in un giorno, "in giornata", "mattina", "pomeriggio" o a un'ora precisa.
+ * Risposte: ognuno (tranne chi l'ha creato) risponde  ok / no / altro (propone un altro giorno).
+ * Giorni liberi: ognuno ha una settimana tipo (lun..dom) e può cambiare singoli giorni (eccezioni).
+ *   valori: 'tutto' | 'mattina' | 'pomeriggio' | 'no' | '' (non detto)
  */
 
-var STATI_LAVORO = ['attesa', 'accettato', 'rifiutato', 'proposta', 'fatto'];
+var FASCE = ['tutto', 'mattina', 'pomeriggio', 'no'];
+var QUANDO = ['giornata', 'mattina', 'pomeriggio', 'ora'];
+var ORE_FASCIA = { mattina: '09:00', pomeriggio: '15:00' };
 
 function nuovoId() {
   return 'L' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
-
-function _testo(v) {
-  return String(v == null ? '' : v).trim();
-}
-
+function _t(v) { return String(v == null ? '' : v).trim(); }
 function _nomi(v) {
-  var lista = Array.isArray(v) ? v : String(v == null ? '' : v).split(',');
+  var lista = Array.isArray(v) ? v : _t(v).split(',');
   var out = [];
-  lista.forEach(function (n) {
-    n = _testo(n);
-    if (n && out.indexOf(n) < 0) out.push(n);
-  });
+  lista.forEach(function (n) { n = _t(n); if (n && out.indexOf(n) < 0) out.push(n); });
   return out;
 }
+function _risposta(r) { return { r: r || 'attesa', data: '', ora: '', nota: '' }; }
 
-function _rispostaVuota(stato) {
-  return { stato: stato || 'attesa', nota: '', propData: '', propOra: '', propTitolo: '', propDescrizione: '', quando: '' };
+/* ---------- Stato del lavoro ---------- */
+function statoLavoro(j) {
+  if (j.fatto) return 'fatto';
+  var altri = j.assegnati.filter(function (n) { return n !== j.creatore; });
+  if (!altri.length) return 'ok';
+  var s = altri.map(function (n) { return (j.risposte[n] || {}).r || 'attesa'; });
+  if (s.indexOf('altro') >= 0) return 'altro';
+  if (s.indexOf('attesa') >= 0) return 'attesa';
+  if (s.every(function (x) { return x === 'no'; })) return 'no';
+  return 'ok';
 }
 
-/* Stato del lavoro calcolato dalle risposte delle persone */
-function statoComplessivo(j) {
-  if (j.stato === 'fatto') return 'fatto';
-  var stati = j.assegnati.map(function (n) { return (j.risposte[n] || {}).stato || 'attesa'; });
-  if (!stati.length) return 'attesa';
-  if (stati.indexOf('proposta') >= 0) return 'proposta';
-  if (stati.indexOf('attesa') >= 0) return 'attesa';
-  if (stati.every(function (s) { return s === 'rifiutato'; })) return 'rifiutato';
-  return 'accettato';
-}
-
-/* Mette un lavoro nella forma giusta (anche quelli creati con la versione 1, a persona singola) */
+/* Mette un lavoro nella forma giusta (dal foglio arrivano tutte stringhe) */
 function normalizza(j) {
-  var vecchio = !j.risposte || j.risposte === '{}' ? j : null;
-  if (!Array.isArray(j.assegnati)) j.assegnati = _nomi(j.assegnati != null && j.assegnati !== '' ? j.assegnati : j.assegnato);
-  if (typeof j.risposte === 'string') {
-    try { j.risposte = JSON.parse(j.risposte || '{}'); } catch (e) { j.risposte = {}; }
-  }
+  j.assegnati = _nomi(j.assegnati);
+  if (typeof j.risposte === 'string') { try { j.risposte = JSON.parse(j.risposte || '{}'); } catch (e) { j.risposte = {}; } }
   if (!j.risposte || typeof j.risposte !== 'object') j.risposte = {};
-  j.assegnati.forEach(function (n) {
-    if (j.risposte[n]) return;
-    var r = _rispostaVuota(n === j.creatore ? 'accettato' : 'attesa');
-    if (vecchio && j.assegnati.length === 1 && n !== j.creatore && j.stato && j.stato !== 'fatto') {
-      r.stato = j.stato;
-      r.nota = _testo(j.nota);
-      r.propData = _testo(j.propData); r.propOra = _testo(j.propOra);
-      r.propTitolo = _testo(j.propTitolo); r.propDescrizione = _testo(j.propDescrizione);
-    }
-    j.risposte[n] = r;
-  });
-  Object.keys(j.risposte).forEach(function (n) {
-    if (j.assegnati.indexOf(n) < 0) delete j.risposte[n];
-  });
-  if (vecchio && j.assegnati.length === 1) j.nota = '';
-  ['assegnato', 'propData', 'propOra', 'propTitolo', 'propDescrizione'].forEach(function (k) { delete j[k]; });
+  j.assegnati.forEach(function (n) { if (!j.risposte[n]) j.risposte[n] = _risposta(n === j.creatore ? 'ok' : 'attesa'); });
+  Object.keys(j.risposte).forEach(function (n) { if (j.assegnati.indexOf(n) < 0) delete j.risposte[n]; });
+  j.fatto = j.fatto === true || j.fatto === 'true' || j.fatto === 'SÌ' || j.stato === 'fatto';
+  if (QUANDO.indexOf(j.quando) < 0) j.quando = _t(j.ora) ? 'ora' : 'giornata';
+  if (j.quando !== 'ora') j.ora = '';
   j.durata = Number(j.durata) > 0 ? Math.round(Number(j.durata)) : 60;
-  j.nota = _testo(j.nota);
-  j.stato = statoComplessivo(j);
+  j.emoji = _t(j.emoji) || '📋';
+  j.stato = statoLavoro(j);
   return j;
 }
 
+/* ---------- Giorni liberi ---------- */
+function giornoSett(data) {                    // 0 = lunedì … 6 = domenica
+  var p = String(data).split('-').map(Number);
+  return (new Date(p[0], p[1] - 1, p[2]).getDay() + 6) % 7;
+}
+function libero(db, nome, data) {
+  var ecc = (db.eccezioni || {})[nome] || {};
+  if (ecc[data]) return ecc[data];
+  var sett = (db.settimane || {})[nome] || [];
+  return sett[giornoSett(data)] || '';
+}
+/* fascia occupata dal lavoro: 'mattina', 'pomeriggio' o 'giornata' */
+function fasciaLavoro(j) {
+  if (j.quando === 'mattina' || j.quando === 'pomeriggio') return j.quando;
+  if (j.quando === 'ora') return j.ora < '13:00' ? 'mattina' : 'pomeriggio';
+  return 'giornata';
+}
+/* 'si' | 'parte' | 'no' | '' : quanto la persona è libera per quella fascia */
+function liberaPer(valore, fascia) {
+  if (!valore) return '';
+  if (valore === 'no') return 'no';
+  if (valore === 'tutto') return 'si';
+  if (fascia === 'giornata') return 'parte';
+  return valore === fascia ? 'si' : 'no';
+}
+
 /**
- * Applica un'azione al "database" { lavori: [], storico: [] }.
- * p = { action, chi, id, ... }
- * Restituisce { lavoro, notifiche: [{a, tipo, id}], calendario: 'salva' | 'elimina' }
+ * Applica un'azione. db = { lavori, settimane, eccezioni, admin }
+ * Restituisce { lavoro, notifiche: [{a, tipo}], calendario: 'salva'|'elimina'|null }
  */
 function applica(db, p, adesso) {
   adesso = adesso || new Date().toISOString();
-  var chi = _testo(p.chi);
-  if (!chi) throw new Error('Scegli prima chi sei nelle impostazioni');
+  var chi = _t(p.chi);
+  if (!chi) throw new Error('Scegli prima chi sei ⚙️');
+  db.settimane = db.settimane || {};
+  db.eccezioni = db.eccezioni || {};
+  var capo = chi === db.admin;
+  var notifiche = [], calendario = null, j = null;
 
-  var notifiche = [];
-  var calendario = null;
-  var j = null;
-
-  function log(lav, azione, dettaglio) {
-    db.storico.push({
-      quando: adesso, id: lav.id, titolo: lav.titolo, chi: chi,
-      azione: azione, dettaglio: dettaglio || ''
-    });
-  }
+  function avvisa(a, tipo) { if (a && a !== chi) notifiche.push({ a: a, tipo: tipo }); }
   function trova() {
-    for (var i = 0; i < db.lavori.length; i++) {
-      if (db.lavori[i].id === p.id) return normalizza(db.lavori[i]);
-    }
-    throw new Error('Lavoro non trovato: forse è stato eliminato. Aggiorna la pagina.');
+    for (var i = 0; i < db.lavori.length; i++) if (db.lavori[i].id === p.id) return normalizza(db.lavori[i]);
+    throw new Error('Lavoro non trovato: forse è stato eliminato 🔄');
   }
-  function avvisa(a, tipo, lav) {
-    if (a && a !== chi) notifiche.push({ a: a, tipo: tipo, id: lav.id });
+  function puoGestire(l) {
+    if (chi !== l.creatore && !capo) throw new Error('Solo ' + l.creatore + ' può cambiarlo');
   }
-  function avvisaTutti(lav, tipo) {
-    var tutti = [lav.creatore].concat(lav.assegnati);
-    tutti.forEach(function (n, i) { if (tutti.indexOf(n) === i) avvisa(n, tipo, lav); });
+  function campi() {
+    var q = QUANDO.indexOf(p.quando) >= 0 ? p.quando : (_t(p.ora) ? 'ora' : 'giornata');
+    var c = {
+      emoji: _t(p.emoji) || '📋', titolo: _t(p.titolo), descrizione: _t(p.descrizione),
+      data: _t(p.data), quando: q, ora: q === 'ora' ? _t(p.ora) : '',
+      durata: Number(p.durata) > 0 ? Math.round(Number(p.durata)) : 60, assegnati: _nomi(p.assegnati)
+    };
+    if (!c.titolo) throw new Error('Scrivi cosa c\'è da fare ✍️');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(c.data)) throw new Error('Scegli il giorno 📅');
+    if (q === 'ora' && !/^\d{2}:\d{2}$/.test(c.ora)) throw new Error('Scegli l\'ora 🕐');
+    if (!c.assegnati.length) throw new Error('Scegli almeno una persona 🙋');
+    return c;
   }
-  function dataBella(d, o) {
-    return d.split('-').reverse().join('/') + (o ? ' alle ' + o : '');
-  }
-  function durata(v) {
-    var n = Number(v);
-    return n > 0 ? Math.round(n) : 60;
-  }
-  function leggiCampi() {
-    var a = _nomi(p.assegnati != null ? p.assegnati : p.assegnato);
-    if (!_testo(p.titolo)) throw new Error('Scrivi cosa c\'è da fare');
-    if (!_testo(p.data)) throw new Error('Scegli il giorno');
-    if (!a.length) throw new Error('Scegli almeno una persona');
-    return a;
-  }
-  function perChi(lav) {
-    var altri = lav.assegnati.filter(function (n) { return n !== chi; });
-    if (!altri.length) return 'per sé';
-    return 'per ' + (lav.assegnati.indexOf(chi) >= 0 ? 'sé, ' : '') + altri.join(', ');
-  }
-  /* tutti tornano "in attesa" (chi ha creato il lavoro e chi è indicato in "tranne" restano com'erano) */
-  function ripartiDaCapo(lav, tranne) {
-    lav.assegnati.forEach(function (n) {
-      if (n === tranne) return;
-      lav.risposte[n] = _rispostaVuota(n === lav.creatore ? 'accettato' : 'attesa');
-      if (n !== lav.creatore) avvisa(n, 'modificato', lav);
+  function daCapo(l, tranne) {               // il giorno è cambiato: gli altri devono riconfermare
+    l.assegnati.forEach(function (n) {
+      if (n === l.creatore || n === tranne) return;
+      l.risposte[n] = _risposta('attesa');
+      avvisa(n, 'spostato');
     });
   }
 
   switch (p.action) {
-    case 'crea': {
-      var assegnati = leggiCampi();
-      j = {
-        id: nuovoId(),
-        titolo: _testo(p.titolo),
-        descrizione: _testo(p.descrizione),
-        data: _testo(p.data),
-        ora: _testo(p.ora),
-        durata: durata(p.durata),
-        assegnati: assegnati,
-        creatore: chi,
-        stato: 'attesa',
-        risposte: {},
-        nota: '', eventoId: '', creato: adesso, aggiornato: adesso
-      };
-      assegnati.forEach(function (n) {
-        j.risposte[n] = _rispostaVuota(n === chi ? 'accettato' : 'attesa');
-        avvisa(n, 'nuovo', j);
-      });
+    case 'crea':
+      j = campi();
+      j.id = nuovoId(); j.creatore = chi; j.fatto = false; j.risposte = {};
+      j.eventoId = ''; j.creato = adesso;
+      j.assegnati.forEach(function (n) { j.risposte[n] = _risposta(n === chi ? 'ok' : 'attesa'); avvisa(n, 'nuovo'); });
       db.lavori.push(j);
-      log(j, 'ha creato il lavoro', perChi(j));
       calendario = 'salva';
       break;
-    }
 
     case 'modifica': {
-      j = trova();
-      if (chi !== j.creatore) throw new Error('Solo ' + j.creatore + ' può modificare questo lavoro');
-      var nuovi = leggiCampi();
-      var tolti = j.assegnati.filter(function (n) { return nuovi.indexOf(n) < 0; });
-      j.titolo = _testo(p.titolo);
-      j.descrizione = _testo(p.descrizione);
-      j.data = _testo(p.data);
-      j.ora = _testo(p.ora);
-      j.durata = durata(p.durata);
-      j.assegnati = nuovi;
-      j.risposte = {};
-      j.nota = '';
-      if (j.stato === 'fatto') j.stato = '';
-      nuovi.forEach(function (n) {
-        j.risposte[n] = _rispostaVuota(n === chi ? 'accettato' : 'attesa');
-        avvisa(n, 'modificato', j);
+      j = trova(); puoGestire(j);
+      var c = campi();
+      var spostato = c.data !== j.data || c.quando !== j.quando || c.ora !== j.ora;
+      var vecchi = j.assegnati;
+      Object.keys(c).forEach(function (k) { j[k] = c[k]; });
+      j.assegnati.forEach(function (n) {
+        if (vecchi.indexOf(n) < 0) { j.risposte[n] = _risposta(n === j.creatore ? 'ok' : 'attesa'); avvisa(n, 'nuovo'); }
       });
-      tolti.forEach(function (n) { avvisa(n, 'tolto', j); });
-      log(j, 'ha modificato il lavoro', perChi(j));
+      normalizza(j);
+      if (spostato) daCapo(j);
       calendario = 'salva';
       break;
     }
@@ -192,201 +150,152 @@ function applica(db, p, adesso) {
     case 'rispondi': {
       j = trova();
       if (j.assegnati.indexOf(chi) < 0) throw new Error('Questo lavoro non è per te');
-      if (chi === j.creatore) throw new Error('L\'hai creato tu: per cambiarlo usa "Modifica lavoro"');
-      if (j.stato === 'fatto') throw new Error('Il lavoro è già fatto');
-      var r = _rispostaVuota();
-      r.nota = _testo(p.nota);
-      r.quando = adesso;
-      if (p.tipo === 'accetta') {
-        r.stato = 'accettato';
-        log(j, 'ha accettato', r.nota);
-      } else if (p.tipo === 'rifiuta') {
-        r.stato = 'rifiutato';
-        log(j, 'non può farlo', r.nota);
-      } else if (p.tipo === 'data') {
-        if (!_testo(p.propData)) throw new Error('Scegli il nuovo giorno');
-        r.stato = 'proposta';
-        r.propData = _testo(p.propData);
-        r.propOra = _testo(p.propOra);
-        log(j, 'propone un altro giorno', dataBella(r.propData, r.propOra) + (r.nota ? ' — ' + r.nota : ''));
-      } else if (p.tipo === 'modifica') {
-        var t = _testo(p.propTitolo);
-        var d = _testo(p.propDescrizione);
-        if (!t) throw new Error('Il titolo non può essere vuoto');
-        if (t === j.titolo && d === j.descrizione) throw new Error('Non hai cambiato niente');
-        r.stato = 'proposta';
-        r.propTitolo = t;
-        r.propDescrizione = d;
-        log(j, 'propone una modifica', r.nota);
-      } else {
-        throw new Error('Risposta non valida');
+      if (j.fatto) throw new Error('È già fatto ✔️');
+      var r = _risposta(p.tipo);
+      r.nota = _t(p.nota);
+      if (['ok', 'no', 'altro'].indexOf(p.tipo) < 0) throw new Error('Risposta non valida');
+      if (p.tipo === 'altro') {
+        r.data = _t(p.data);
+        r.ora = _t(p.ora);
+        if (!r.data) throw new Error('Scegli il giorno che ti va meglio 📅');
+        if (r.data === j.data && !r.ora) throw new Error('È lo stesso giorno di adesso');
       }
       j.risposte[chi] = r;
-      avvisa(j.creatore, p.tipo, j);
+      if (chi !== j.creatore) avvisa(j.creatore, 'risposta_' + p.tipo);
       calendario = 'salva';
       break;
     }
 
-    case 'decidi': {
-      j = trova();
-      if (chi !== j.creatore) throw new Error('Solo ' + j.creatore + ' può decidere sulla proposta');
-      var proponenti = j.assegnati.filter(function (n) { return j.risposte[n].stato === 'proposta'; });
-      var chiPropone = _testo(p.persona) || (proponenti.length === 1 ? proponenti[0] : '');
-      var rp = chiPropone && j.risposte[chiPropone];
-      if (!rp || rp.stato !== 'proposta') throw new Error('Non c\'è nessuna proposta da valutare');
-      if (p.approva) {
-        var cambiato = false;
-        if (rp.propData) {
-          cambiato = rp.propData !== j.data || rp.propOra !== j.ora;
-          j.data = rp.propData; j.ora = rp.propOra;
-        }
-        if (rp.propTitolo) {
-          cambiato = cambiato || rp.propTitolo !== j.titolo || rp.propDescrizione !== j.descrizione;
-          j.titolo = rp.propTitolo; j.descrizione = rp.propDescrizione;
-        }
-        j.risposte[chiPropone] = _rispostaVuota('accettato');
-        j.risposte[chiPropone].quando = adesso;
-        // se il lavoro è cambiato, chi aveva già risposto deve riconfermare (le altre proposte restano)
-        if (cambiato) {
-          j.assegnati.forEach(function (n) {
-            if (n === chiPropone || n === j.creatore || j.risposte[n].stato === 'proposta') return;
-            j.risposte[n] = _rispostaVuota('attesa');
-            avvisa(n, 'modificato', j);
-          });
-        }
-        log(j, 'ha accettato la proposta di ' + chiPropone, _testo(p.nota));
-        avvisa(chiPropone, 'approvata', j);
-      } else {
-        j.risposte[chiPropone] = _rispostaVuota('attesa');
-        log(j, 'non ha accettato la proposta di ' + chiPropone, _testo(p.nota));
-        avvisa(chiPropone, 'respinta', j);
-      }
-      j.nota = _testo(p.nota);
+    case 'sposta': {                         // chi ha creato accetta l'altro giorno proposto
+      j = trova(); puoGestire(j);
+      var rp = j.risposte[_t(p.persona)];
+      if (!rp || rp.r !== 'altro') throw new Error('Non c\'è nessuna proposta');
+      j.data = rp.data;
+      if (rp.ora) { j.quando = 'ora'; j.ora = rp.ora; }
+      j.risposte[p.persona] = _risposta('ok');
+      daCapo(j, p.persona);
+      avvisa(p.persona, 'spostato');
       calendario = 'salva';
       break;
     }
 
     case 'fatto':
-      j = trova();
-      if (chi !== j.creatore && j.assegnati.indexOf(chi) < 0) throw new Error('Non è un tuo lavoro');
-      j.stato = 'fatto';
-      log(j, 'ha segnato come fatto', '');
-      avvisaTutti(j, 'fatto');
-      calendario = 'salva';
-      break;
-
     case 'riapri':
       j = trova();
-      if (chi !== j.creatore && j.assegnati.indexOf(chi) < 0) throw new Error('Non è un tuo lavoro');
-      j.stato = '';
-      log(j, 'ha riaperto il lavoro', '');
+      if (j.assegnati.indexOf(chi) < 0 && chi !== j.creatore && !capo) throw new Error('Non è un tuo lavoro');
+      j.fatto = p.action === 'fatto';
+      if (j.fatto) avvisa(j.creatore, 'fatto');
       calendario = 'salva';
       break;
 
     case 'elimina':
-      j = trova();
-      if (chi !== j.creatore) throw new Error('Solo ' + j.creatore + ' può eliminarlo');
+      j = trova(); puoGestire(j);
       db.lavori.splice(db.lavori.indexOf(j), 1);
-      log(j, 'ha eliminato il lavoro', '');
-      avvisaTutti(j, 'eliminato');
+      j.assegnati.forEach(function (n) { avvisa(n, 'eliminato'); });
       calendario = 'elimina';
       break;
+
+    case 'settimana': {                      // la propria settimana tipo
+      var nome = _t(p.nome) || chi;
+      if (nome !== chi && !capo) throw new Error('Puoi cambiare solo i tuoi giorni');
+      var s = (Array.isArray(p.settimana) ? p.settimana : []).slice(0, 7);
+      while (s.length < 7) s.push('');
+      db.settimane[nome] = s.map(function (v) { return FASCE.indexOf(v) >= 0 ? v : ''; });
+      return { lavoro: null, notifiche: [], calendario: null };
+    }
+
+    case 'eccezione': {                      // un giorno diverso dal solito
+      var nm = _t(p.nome) || chi;
+      if (nm !== chi && !capo) throw new Error('Puoi cambiare solo i tuoi giorni');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(_t(p.data))) throw new Error('Giorno non valido');
+      db.eccezioni[nm] = db.eccezioni[nm] || {};
+      if (FASCE.indexOf(p.valore) >= 0) db.eccezioni[nm][p.data] = p.valore;
+      else delete db.eccezioni[nm][p.data];
+      return { lavoro: null, notifiche: [], calendario: null };
+    }
 
     default:
       throw new Error('Azione sconosciuta');
   }
 
-  j.stato = statoComplessivo(j);
+  j.stato = statoLavoro(j);
   j.aggiornato = adesso;
   return { lavoro: j, notifiche: notifiche, calendario: calendario };
 }
 
 
 /* =====================================================================
- * Lavori di casa — server sul foglio Google
- * - Il foglio fa da archivio (schede Lavori, Persone, Storico, Impostazioni)
- * - Ogni lavoro diventa un evento nel calendario Google "Lavori di casa"
- * - Avvisi via email a chi deve rispondere
+ * Lavori di casa v2 — server sul foglio Google
+ * Schede: Lavori, Persone, Giorni liberi, Eccezioni, Impostazioni
+ * Il calendario Google riceve solo una COPIA dei lavori (non viene mai riletto: app veloce).
  * Il PIN e le email stanno SOLO nel foglio, non in questo codice.
  * ===================================================================== */
 
-var FOGLIO_LAVORI = 'Lavori';
-var FOGLIO_PERSONE = 'Persone';
-var FOGLIO_STORICO = 'Storico';
-var FOGLIO_IMPOSTAZIONI = 'Impostazioni';
+var F_LAVORI = 'Lavori', F_PERSONE = 'Persone', F_SETT = 'Giorni liberi', F_ECC = 'Eccezioni', F_IMP = 'Impostazioni';
 
-var CAMPI = ['id', 'titolo', 'descrizione', 'data', 'ora', 'durata', 'assegnati', 'creatore', 'stato',
-  'risposte', 'nota', 'eventoId', 'creato', 'aggiornato'];
-var INTESTAZIONI = ['ID', 'Titolo', 'Descrizione', 'Data', 'Ora', 'Durata (min)', 'Per chi', 'Creato da', 'Stato',
-  'Risposte (non toccare)', 'Nota', 'ID evento calendario', 'Creato il', 'Aggiornato il'];
-// nomi delle colonne riconosciuti, anche quelli della versione 1 (lavori per una sola persona)
-var COLONNE = {
-  'ID': 'id', 'Titolo': 'titolo', 'Descrizione': 'descrizione', 'Data': 'data', 'Ora': 'ora', 'Durata (min)': 'durata',
-  'Per chi': 'assegnati', 'Creato da': 'creatore', 'Stato': 'stato', 'Risposte (non toccare)': 'risposte', 'Risposte': 'risposte',
-  'Proposta: giorno': 'propData', 'Proposta: ora': 'propOra', 'Proposta: titolo': 'propTitolo', 'Proposta: dettagli': 'propDescrizione',
-  'Nota': 'nota', 'ID evento calendario': 'eventoId', 'Creato il': 'creato', 'Aggiornato il': 'aggiornato'
-};
-var CAMPI_STORICO = ['quando', 'id', 'titolo', 'chi', 'azione', 'dettaglio'];
-var INTESTAZIONI_STORICO = ['Quando', 'ID lavoro', 'Lavoro', 'Chi', 'Azione', 'Dettaglio'];
-
-var ICONE = { attesa: '⏳', accettato: '✅', rifiutato: '❌', proposta: '🔄', fatto: '✔️' };
-var NOMI_STATO = { attesa: 'In attesa di risposta', accettato: 'Accettato', rifiutato: 'Non può', proposta: 'Propone una modifica', fatto: 'Fatto' };
+var CAMPI = ['id', 'emoji', 'titolo', 'descrizione', 'data', 'quando', 'ora', 'durata', 'assegnati', 'creatore',
+  'stato', 'risposte', 'eventoId', 'creato', 'aggiornato'];
+var INTESTAZIONI = ['ID', 'Emoji', 'Titolo', 'Dettagli', 'Giorno', 'Quando', 'Ora', 'Durata (min)', 'Per chi', 'Creato da',
+  'Stato', 'Risposte (non toccare)', 'ID evento (non toccare)', 'Creato il', 'Aggiornato il'];
+var GIORNI = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'];
+var TESTO_FASCIA = { tutto: '☀️ Tutto il giorno', mattina: '🌅 Mattina', pomeriggio: '🌇 Pomeriggio', no: '❌ No' };
+var ICONA_STATO = { attesa: '⏳', ok: '✅', no: '❌', altro: '📅', fatto: '✔️' };
+var NOME_STATO = { attesa: 'In attesa', ok: 'Confermato', no: 'Nessuno può', altro: 'Altro giorno proposto', fatto: 'Fatto' };
 
 /* ---------- Menu nel foglio ---------- */
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('📋 Lavori')
     .addItem('Prepara foglio e calendario', 'setup')
     .addItem('Ricrea gli eventi nel calendario', 'riallineaCalendario')
-    .addItem('Manda un\'email di prova a me', 'emailDiProva')
     .addToUi();
 }
 
-/* ---------- Preparazione (da eseguire una volta) ---------- */
+/* ---------- Preparazione (una volta sola) ---------- */
 function setup() {
   var ss = SpreadsheetApp.getActive();
-
-  var lav = ss.getSheetByName(FOGLIO_LAVORI);
-  if (lav && lav.getLastRow() > 1) {
-    scriviLavori_(leggiLavori_(lav, ss.getSpreadsheetTimeZone())); // converte i lavori esistenti
-  } else {
-    lav = preparaFoglio_(ss, FOGLIO_LAVORI, INTESTAZIONI);
-  }
+  var lav = prepara_(ss, F_LAVORI, INTESTAZIONI);
   lav.getRange(1, 1, lav.getMaxRows(), INTESTAZIONI.length).setNumberFormat('@');
-  lav.setColumnWidth(2, 220); lav.setColumnWidth(3, 260);
+  lav.setColumnWidth(3, 220); lav.setColumnWidth(4, 240);
 
-  var per = preparaFoglio_(ss, FOGLIO_PERSONE, ['Nome', 'Email', 'Colore']);
+  var per = prepara_(ss, F_PERSONE, ['Nome', 'Email', 'Colore']);
   if (per.getLastRow() < 2) {
-    per.getRange(2, 1, 3, 3).setValues([
-      ['Federico', '', '#7c8cff'],
-      ['Mamma', '', '#ff7ab6'],
-      ['Sorella', '', '#3dd68c']
-    ]);
+    per.getRange(2, 1, 3, 3).setValues([['Federico', '', '#6d7cff'], ['Mamma', '', '#ff6fa8'], ['Sorella', '', '#22c07a']]);
   }
   per.setColumnWidth(2, 260);
 
-  var sto = preparaFoglio_(ss, FOGLIO_STORICO, INTESTAZIONI_STORICO);
-  sto.getRange(1, 1, sto.getMaxRows(), INTESTAZIONI_STORICO.length).setNumberFormat('@');
+  var sett = prepara_(ss, F_SETT, ['Nome'].concat(GIORNI));
+  if (sett.getLastRow() < 2) {
+    var nomi = per.getRange(2, 1, per.getLastRow() - 1, 1).getValues();
+    sett.getRange(2, 1, nomi.length, 8).setValues(nomi.map(function (r) { return [r[0], '', '', '', '', '', '', '']; }));
+  }
+  var regola = SpreadsheetApp.newDataValidation()
+    .requireValueInList([TESTO_FASCIA.tutto, TESTO_FASCIA.mattina, TESTO_FASCIA.pomeriggio, TESTO_FASCIA.no], true)
+    .setAllowInvalid(true).build();
+  sett.getRange(2, 2, sett.getMaxRows() - 1, 7).setDataValidation(regola);
 
-  var imp = preparaFoglio_(ss, FOGLIO_IMPOSTAZIONI, ['Impostazione', 'Valore', 'Cosa fa']);
+  var ecc = prepara_(ss, F_ECC, ['Nome', 'Giorno', 'Libero']);
+  ecc.getRange(1, 1, ecc.getMaxRows(), 3).setNumberFormat('@');
+
+  var imp = prepara_(ss, F_IMP, ['Impostazione', 'Valore', 'Cosa fa']);
   if (imp.getLastRow() < 2) {
-    imp.getRange(2, 1, 4, 3).setValues([
+    imp.getRange(2, 1, 5, 3).setValues([
       ['PIN', '1234', 'Il PIN di famiglia da scrivere nell\'app. CAMBIALO!'],
-      ['Nome calendario', 'Lavori di casa', 'Il calendario Google dove finiscono i lavori'],
-      ['Link app', '', 'Il link dell\'app su GitHub Pages (va nel pulsante delle email)'],
-      ['Email di avviso', 'SÌ', 'SÌ = manda le email, NO = niente email']
+      ['Amministratore', 'Federico', 'Chi può modificare ed eliminare tutti i lavori'],
+      ['Nome calendario', 'Lavori di casa', 'Il calendario Google dove finisce la copia dei lavori'],
+      ['Link app', '', 'Incolla qui il link dell\'app su GitHub Pages (va nelle email e nel calendario)'],
+      ['Email di avviso', 'SÌ', 'SÌ = email per lavori nuovi, spostati e risposte · NO = niente email']
     ]);
   }
   imp.getRange('B:B').setNumberFormat('@');
-  imp.setColumnWidth(1, 160); imp.setColumnWidth(2, 260); imp.setColumnWidth(3, 380);
+  imp.setColumnWidth(1, 160); imp.setColumnWidth(2, 280); imp.setColumnWidth(3, 420);
 
   var cal = calendario_();
-  var msg = 'Tutto pronto!\n\nCalendario: "' + cal.getName() + '"\n\n' +
-    'Ora: 1) scrivi le email nella scheda Persone, 2) cambia il PIN nella scheda Impostazioni, ' +
-    '3) pubblica lo script come App web.';
+  var msg = 'Tutto pronto! ✅\n\nCalendario: "' + cal.getName() + '"\n\n' +
+    'Ora: 1) scrivi le email nella scheda Persone, 2) cambia il PIN in Impostazioni, 3) pubblica come App web.';
   try { SpreadsheetApp.getUi().alert(msg); } catch (e) { Logger.log(msg); }
 }
 
-function preparaFoglio_(ss, nome, intestazioni) {
+function prepara_(ss, nome, intestazioni) {
   var sh = ss.getSheetByName(nome) || ss.insertSheet(nome);
   sh.getRange(1, 1, 1, intestazioni.length).setValues([intestazioni])
     .setFontWeight('bold').setBackground('#1d2230').setFontColor('#ffffff');
@@ -394,345 +303,261 @@ function preparaFoglio_(ss, nome, intestazioni) {
   return sh;
 }
 
-function impostazioni_() {
-  var sh = SpreadsheetApp.getActive().getSheetByName(FOGLIO_IMPOSTAZIONI);
-  var out = {};
-  if (!sh || sh.getLastRow() < 2) return out;
-  sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues().forEach(function (r) {
-    if (r[0]) out[String(r[0]).trim()] = String(r[1]).trim();
-  });
-  return out;
-}
-
 /* ---------- Server per l'app ---------- */
-function doGet() {
-  return json_({ ok: true, info: 'Server di Lavori di casa attivo' });
-}
+function doGet() { return json_({ ok: true, info: 'Lavori di casa v2 attivo ✅' }); }
 
 function doPost(e) {
   try {
     var p = JSON.parse(e.postData.contents);
-    var imp = impostazioni_();
-    if (!imp['PIN'] || String(p.pin) !== String(imp['PIN'])) return json_({ ok: false, error: 'PIN sbagliato' });
+    var ss = SpreadsheetApp.getActive();
+    var imp = impostazioni_(ss);
+    if (!imp['PIN'] || String(p.pin) !== String(imp['PIN'])) return json_({ ok: false, error: 'PIN sbagliato 🔒' });
 
-    if (p.action === 'list') {
-      var db0 = leggiDb_();
-      sincronizzaDalCalendario_(db0);
-      return json_(pacchetto_(db0));
-    }
+    if (p.action === 'list') return json_(pacchetto_(leggiDb_(ss, imp)));
 
     var lock = LockService.getScriptLock();
-    lock.waitLock(20000);
+    lock.waitLock(15000);
     try {
-      var db = leggiDb_();
-      var nStorico = db.storico.length;
+      var db = leggiDb_(ss, imp);
       var r = applica(db, p);
       var avviso = '';
-      try {
-        if (r.calendario === 'salva') salvaEvento_(r.lavoro);
-        else if (r.calendario === 'elimina') eliminaEvento_(r.lavoro);
-      } catch (errCal) {
-        avviso = 'Salvato, ma il calendario non si è aggiornato: ' + errCal.message;
+      if (r.calendario) {
+        try { if (r.calendario === 'salva') salvaEvento_(r.lavoro, imp); else eliminaEvento_(r.lavoro, imp); }
+        catch (errCal) { avviso = 'Salvato, ma il calendario non si è aggiornato: ' + errCal.message; }
       }
-      scriviLavori_(db.lavori);
-      scriviStorico_(db.storico.slice(nStorico));
-      try { inviaNotifiche_(r, p.chi); } catch (errMail) { Logger.log(errMail); }
+      if (p.action === 'settimana') scriviSettimane_(ss, db);
+      else if (p.action === 'eccezione') scriviEccezioni_(ss, db);
+      else scriviLavori_(ss, db.lavori);
+      try { inviaEmail_(r, p.chi, db, imp); } catch (errMail) { Logger.log(errMail); }
       var out = pacchetto_(db);
       if (avviso) out.avviso = avviso;
       return json_(out);
-    } finally {
-      lock.releaseLock();
-    }
+    } finally { lock.releaseLock(); }
   } catch (err) {
     return json_({ ok: false, error: err.message });
   }
 }
 
-function json_(o) {
-  return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);
-}
+function json_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
 
+/* Manda all'app solo i lavori recenti o ancora da fare: meno dati, più veloce */
 function pacchetto_(db) {
+  var limite = Utilities.formatDate(new Date(Date.now() - 60 * 864e5), Session.getScriptTimeZone(), 'yyyy-MM-dd');
   return {
     ok: true,
-    lavori: db.lavori,
+    lavori: db.lavori.filter(function (l) { return !l.fatto || l.data >= limite; }),
     persone: db.persone.map(function (p) { return { nome: p.nome, colore: p.colore }; }),
-    storico: db.storico.slice(-400)
+    settimane: db.settimane, eccezioni: db.eccezioni, admin: db.admin
   };
 }
 
-/* ---------- Lettura e scrittura del foglio ---------- */
-function leggiDb_() {
-  var ss = SpreadsheetApp.getActive();
+/* ---------- Lettura del foglio (una lettura per scheda) ---------- */
+function righe_(ss, nome) {
+  var sh = ss.getSheetByName(nome);
+  if (!sh || sh.getLastRow() < 2) return [];
+  return sh.getDataRange().getValues().slice(1);
+}
+function testo_(v, tz, formato) {
+  if (v instanceof Date) return Utilities.formatDate(v, tz, formato || 'yyyy-MM-dd');
+  return String(v == null ? '' : v).trim();
+}
+function impostazioni_(ss) {
+  var out = {};
+  righe_(ss, F_IMP).forEach(function (r) { if (r[0]) out[String(r[0]).trim()] = String(r[1]).trim(); });
+  return out;
+}
+function daTestoFascia_(v) {
+  v = String(v || '').toLowerCase();
+  if (v.indexOf('tutt') >= 0) return 'tutto';
+  if (v.indexOf('matt') >= 0) return 'mattina';
+  if (v.indexOf('pom') >= 0) return 'pomeriggio';
+  if (v.indexOf('no') >= 0 || v.indexOf('❌') >= 0) return 'no';
+  return '';
+}
+
+function leggiDb_(ss, imp) {
   var tz = ss.getSpreadsheetTimeZone();
-  return {
-    lavori: leggiLavori_(ss.getSheetByName(FOGLIO_LAVORI), tz),
-    storico: leggiTabella_(ss.getSheetByName(FOGLIO_STORICO), CAMPI_STORICO, tz),
-    persone: leggiPersone_()
-  };
-}
-
-function leggiTabella_(sh, campi, tz) {
-  if (!sh || sh.getLastRow() < 2) return [];
-  return sh.getRange(2, 1, sh.getLastRow() - 1, campi.length).getValues().map(function (r) {
-    var o = {};
-    campi.forEach(function (c, i) { o[c] = valore_(r[i], c, tz); });
-    return o;
+  var colori = ['#6d7cff', '#ff6fa8', '#22c07a', '#ffa928', '#29b6e8', '#ff7a4d'];
+  var persone = righe_(ss, F_PERSONE).filter(function (r) { return String(r[0]).trim(); }).map(function (r, i) {
+    return { nome: String(r[0]).trim(), email: String(r[1]).trim(), colore: String(r[2]).trim() || colori[i % colori.length] };
   });
-}
 
-/* Legge i lavori in base ai nomi delle colonne, così funziona anche col foglio della versione 1 */
-function leggiLavori_(sh, tz) {
-  if (!sh || sh.getLastRow() < 2) return [];
-  var n = sh.getLastColumn();
-  var righe = sh.getRange(1, 1, sh.getLastRow(), n).getValues();
-  var campi = righe[0].map(function (h) { return COLONNE[String(h).trim()] || ''; });
-  return righe.slice(1).map(function (r) {
+  var lavori = righe_(ss, F_LAVORI).map(function (r) {
     var o = {};
-    campi.forEach(function (c, i) {
-      if (c && (o[c] === undefined || o[c] === '')) o[c] = valore_(r[i], c, tz);
-    });
+    CAMPI.forEach(function (c, i) { o[c] = testo_(r[i], tz, c === 'ora' ? 'HH:mm' : 'yyyy-MM-dd'); });
+    o.fatto = o.stato === 'fatto';
     return o;
   }).filter(function (l) { return l.id; }).map(normalizza);
+
+  var settimane = {};
+  righe_(ss, F_SETT).forEach(function (r) {
+    var n = String(r[0]).trim();
+    if (n) settimane[n] = r.slice(1, 8).map(daTestoFascia_);
+  });
+
+  var oggi = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
+  var eccezioni = {};
+  righe_(ss, F_ECC).forEach(function (r) {
+    var n = String(r[0]).trim(), d = testo_(r[1], tz), v = daTestoFascia_(r[2]);
+    if (n && d >= oggi && v) { eccezioni[n] = eccezioni[n] || {}; eccezioni[n][d] = v; }
+  });
+
+  return { lavori: lavori, persone: persone, settimane: settimane, eccezioni: eccezioni, admin: imp['Amministratore'] || '' };
 }
 
-function valore_(v, campo, tz) {
-  if (v instanceof Date) {
-    if (campo === 'ora' || campo === 'propOra') return Utilities.formatDate(v, tz, 'HH:mm');
-    if (campo === 'data' || campo === 'propData') return Utilities.formatDate(v, tz, 'yyyy-MM-dd');
-    return v.toISOString();
-  }
-  if (campo === 'durata') return Number(v) || 60;
-  if (campo === 'stato') return String(v || 'attesa').trim().toLowerCase();
-  return String(v == null ? '' : v);
-}
-
-function leggiPersone_() {
-  var sh = SpreadsheetApp.getActive().getSheetByName(FOGLIO_PERSONE);
-  if (!sh || sh.getLastRow() < 2) return [];
-  var colori = ['#7c8cff', '#ff7ab6', '#3dd68c', '#ffb547', '#4cc9f0', '#ff8a5b'];
-  return sh.getRange(2, 1, sh.getLastRow() - 1, 3).getValues()
-    .filter(function (r) { return String(r[0]).trim(); })
-    .map(function (r, i) {
-      return { nome: String(r[0]).trim(), email: String(r[1]).trim(), colore: String(r[2]).trim() || colori[i % colori.length] };
-    });
-}
-
-function scriviLavori_(lavori) {
-  var sh = SpreadsheetApp.getActive().getSheetByName(FOGLIO_LAVORI);
-  var colonne = Math.max(sh.getLastColumn(), CAMPI.length);
+/* ---------- Scrittura ---------- */
+function scriviTutto_(sh, righe, colonne) {
   var vecchie = Math.max(sh.getLastRow() - 1, 0);
   if (vecchie) sh.getRange(2, 1, vecchie, colonne).clearContent();
-  if (colonne > CAMPI.length) sh.getRange(1, CAMPI.length + 1, 1, colonne - CAMPI.length).clearContent();
-  sh.getRange(1, 1, 1, CAMPI.length).setValues([INTESTAZIONI]);
-  if (!lavori.length) return;
+  if (righe.length) sh.getRange(2, 1, righe.length, colonne).setValues(righe);
+}
+function scriviLavori_(ss, lavori) {
+  var sh = ss.getSheetByName(F_LAVORI);
+  lavori.sort(function (a, b) { return (a.data + a.ora).localeCompare(b.data + b.ora); });
   var righe = lavori.map(function (l) {
     return CAMPI.map(function (c) {
-      if (c === 'assegnati') return (l.assegnati || []).join(', ');
-      if (c === 'risposte') return JSON.stringify(l.risposte || {});
+      if (c === 'assegnati') return l.assegnati.join(', ');
+      if (c === 'risposte') return JSON.stringify(l.risposte);
+      if (c === 'stato') return l.fatto ? 'fatto' : l.stato;
       return l[c] == null ? '' : String(l[c]);
     });
   });
-  sh.getRange(2, 1, righe.length, CAMPI.length).setNumberFormat('@').setValues(righe);
+  if (righe.length) sh.getRange(2, 1, righe.length, CAMPI.length).setNumberFormat('@');
+  scriviTutto_(sh, righe, CAMPI.length);
+}
+function scriviSettimane_(ss, db) {
+  var sh = ss.getSheetByName(F_SETT);
+  var nomi = db.persone.map(function (p) { return p.nome; });
+  Object.keys(db.settimane).forEach(function (n) { if (nomi.indexOf(n) < 0) nomi.push(n); });
+  scriviTutto_(sh, nomi.map(function (n) {
+    return [n].concat((db.settimane[n] || []).concat(['', '', '', '', '', '', '']).slice(0, 7).map(function (v) { return TESTO_FASCIA[v] || ''; }));
+  }), 8);
+}
+function scriviEccezioni_(ss, db) {
+  var righe = [];
+  Object.keys(db.eccezioni).forEach(function (n) {
+    Object.keys(db.eccezioni[n]).sort().forEach(function (d) { righe.push([n, d, TESTO_FASCIA[db.eccezioni[n][d]] || '']); });
+  });
+  var sh = ss.getSheetByName(F_ECC);
+  if (righe.length) sh.getRange(2, 1, righe.length, 3).setNumberFormat('@');
+  scriviTutto_(sh, righe, 3);
 }
 
-function scriviStorico_(nuove) {
-  if (!nuove.length) return;
-  var sh = SpreadsheetApp.getActive().getSheetByName(FOGLIO_STORICO);
-  var righe = nuove.map(function (h) { return CAMPI_STORICO.map(function (c) { return h[c] == null ? '' : String(h[c]); }); });
-  sh.getRange(sh.getLastRow() + 1, 1, righe.length, CAMPI_STORICO.length).setNumberFormat('@').setValues(righe);
-}
-
-/* ---------- Calendario Google ---------- */
-function calendario_() {
+/* ---------- Copia nel calendario Google ---------- */
+function calendario_(imp) {
   var props = PropertiesService.getScriptProperties();
   var id = props.getProperty('CAL_ID');
   var cal = id ? CalendarApp.getCalendarById(id) : null;
   if (!cal) {
-    var nome = impostazioni_()['Nome calendario'] || 'Lavori di casa';
+    var nome = (imp || impostazioni_(SpreadsheetApp.getActive()))['Nome calendario'] || 'Lavori di casa';
     var trovati = CalendarApp.getOwnedCalendarsByName(nome);
-    cal = trovati.length ? trovati[0] : CalendarApp.createCalendar(nome, { timeZone: Session.getScriptTimeZone() });
+    cal = trovati.length ? trovati[0] : CalendarApp.createCalendar(nome, { timeZone: 'Europe/Rome' });
     props.setProperty('CAL_ID', cal.getId());
   }
   return cal;
 }
 
-function titoloEvento_(l) {
-  var t = (ICONE[l.stato] || '') + ' ' + l.titolo + ' · ' + l.assegnati.join(', ');
-  var conData = l.assegnati.filter(function (n) { return l.risposte[n].stato === 'proposta' && l.risposte[n].propData; });
-  if (l.stato === 'proposta' && conData.length) t += ' (' + conData[0] + ' propone ' + l.risposte[conData[0]].propData.split('-').reverse().slice(0, 2).join('/') + ')';
-  return t;
+function orari_(l, tz) {
+  var ora = l.quando === 'ora' ? l.ora : ORE_FASCIA[l.quando];
+  if (!ora) return null;                               // in giornata
+  var inizio = Utilities.parseDate(l.data + ' ' + ora, tz, 'yyyy-MM-dd HH:mm');
+  var min = l.quando === 'ora' ? (Number(l.durata) || 60) : 180;
+  return { inizio: inizio, fine: new Date(inizio.getTime() + min * 60000) };
 }
 
-function descrizioneEvento_(l) {
-  var link = impostazioni_()['Link app'];
-  var righe = [];
-  if (l.descrizione) righe.push(l.descrizione, '');
-  righe.push('Stato: ' + (NOMI_STATO[l.stato] || l.stato));
-  righe.push('Creato da: ' + l.creatore);
-  l.assegnati.forEach(function (n) {
-    var r = l.risposte[n];
-    righe.push('• ' + n + ': ' + (ICONE[r.stato] || '') + ' ' + (NOMI_STATO[r.stato] || r.stato) + (r.nota ? ' — ' + r.nota : ''));
+/* Promemoria: il giorno prima alle 8 e 2 ore prima, sempre tra le 8 e le 22 */
+function promemoria_(ev, l, tz, orari) {
+  ev.removeAllReminders();
+  if (l.fatto) return;
+  var inizio = orari ? orari.inizio : Utilities.parseDate(l.data + ' 00:00', tz, 'yyyy-MM-dd HH:mm');
+  var p = l.data.split('-').map(Number);
+  var ieri = Utilities.formatDate(new Date(Date.UTC(p[0], p[1] - 1, p[2] - 1, 12)), 'UTC', 'yyyy-MM-dd');
+  var momenti = [Utilities.parseDate(ieri + ' 08:00', tz, 'yyyy-MM-dd HH:mm')];
+  if (orari) {
+    var due = new Date(inizio.getTime() - 120 * 60000);
+    var giorno = Utilities.formatDate(due, tz, 'yyyy-MM-dd');
+    var hh = Utilities.formatDate(due, tz, 'HH:mm');
+    if (hh < '08:00') due = Utilities.parseDate(giorno + ' 08:00', tz, 'yyyy-MM-dd HH:mm');
+    if (hh > '22:00') due = Utilities.parseDate(giorno + ' 22:00', tz, 'yyyy-MM-dd HH:mm');
+    momenti.push(due);
+  }
+  var fatti = [];
+  momenti.forEach(function (m) {
+    var minuti = Math.round((inizio.getTime() - m.getTime()) / 60000);
+    if (minuti > 0 && minuti <= 40320 && fatti.indexOf(minuti) < 0) { ev.addPopupReminder(minuti); fatti.push(minuti); }
   });
-  if (l.nota) righe.push('Nota: ' + l.nota);
-  if (link) righe.push('', 'Rispondi dall\'app: ' + link);
-  return righe.join('\n');
 }
 
-function coloreEvento_(stato) {
-  var C = CalendarApp.EventColor;
-  return { attesa: C.YELLOW, accettato: C.GREEN, rifiutato: C.RED, proposta: C.CYAN, fatto: C.GRAY }[stato] || C.YELLOW;
-}
-
-function salvaEvento_(l) {
-  var cal = calendario_();
+function salvaEvento_(l, imp) {
+  var cal = calendario_(imp);
   var tz = cal.getTimeZone();
   var ev = null;
   if (l.eventoId) { try { ev = cal.getEventById(l.eventoId); } catch (e) { ev = null; } }
+  var fascia = { mattina: ' 🌅', pomeriggio: ' 🌇' }[l.quando] || '';
+  var titolo = (ICONA_STATO[l.fatto ? 'fatto' : l.stato] || '') + ' ' + l.emoji + ' ' + l.titolo + fascia + ' · ' + l.assegnati.join(', ');
+  var righe = [];
+  if (l.descrizione) righe.push(l.descrizione, '');
+  righe.push('Stato: ' + NOME_STATO[l.fatto ? 'fatto' : l.stato], 'Creato da: ' + l.creatore);
+  if (imp['Link app']) righe.push('', 'Apri l\'app: ' + imp['Link app']);
+  var orari = orari_(l, tz);
+  var giorno = Utilities.parseDate(l.data + ' 12:00', tz, 'yyyy-MM-dd HH:mm');
 
-  var titolo = titoloEvento_(l);
-  var opzioni = { description: descrizioneEvento_(l) };
-  var inizio, fine, giorno;
-  if (l.ora) {
-    inizio = Utilities.parseDate(l.data + ' ' + l.ora, tz, 'yyyy-MM-dd HH:mm');
-    fine = new Date(inizio.getTime() + (Number(l.durata) || 60) * 60000);
-  } else {
-    giorno = Utilities.parseDate(l.data + ' 12:00', Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
-  }
-
+  if (ev && ev.isAllDayEvent() !== !orari) { ev.deleteEvent(); ev = null; }
   if (!ev) {
-    ev = l.ora ? cal.createEvent(titolo, inizio, fine, opzioni) : cal.createAllDayEvent(titolo, giorno, opzioni);
+    ev = orari ? cal.createEvent(titolo, orari.inizio, orari.fine) : cal.createAllDayEvent(titolo, giorno);
     l.eventoId = ev.getId();
   } else {
     ev.setTitle(titolo);
-    ev.setDescription(opzioni.description);
-    if (l.ora) ev.setTime(inizio, fine); else ev.setAllDayDate(giorno);
+    if (orari) ev.setTime(orari.inizio, orari.fine); else ev.setAllDayDate(giorno);
   }
-  ev.setColor(coloreEvento_(l.stato));
+  ev.setDescription(righe.join('\n'));
+  var C = CalendarApp.EventColor;
+  ev.setColor(l.fatto ? C.GRAY : ({ attesa: C.YELLOW, ok: C.GREEN, no: C.RED, altro: C.CYAN }[l.stato] || C.YELLOW));
+  promemoria_(ev, l, tz, orari);
 }
 
-function eliminaEvento_(l) {
+function eliminaEvento_(l, imp) {
   if (!l.eventoId) return;
-  try {
-    var ev = calendario_().getEventById(l.eventoId);
-    if (ev) ev.deleteEvent();
-  } catch (e) { Logger.log(e); }
+  try { var ev = calendario_(imp).getEventById(l.eventoId); if (ev) ev.deleteEvent(); } catch (e) { Logger.log(e); }
 }
 
-/* Se qualcuno sposta un lavoro direttamente in Google Calendar, l'app lo vede. */
-function sincronizzaDalCalendario_(db) {
-  try {
-    var attivi = db.lavori.filter(function (l) { return l.eventoId && l.stato !== 'fatto'; });
-    if (!attivi.length) return;
-    var cal = calendario_();
-    var tz = cal.getTimeZone();
-    var tzScript = Session.getScriptTimeZone();
-    var adesso = new Date();
-    var eventi = cal.getEvents(new Date(adesso.getTime() - 120 * 864e5), new Date(adesso.getTime() + 400 * 864e5));
-    var mappa = {};
-    eventi.forEach(function (ev) { mappa[ev.getId()] = ev; });
-
-    var iso = adesso.toISOString();
-    var n0 = db.storico.length;
-    var cambiati = 0;
-    attivi.forEach(function (l) {
-      var ev = mappa[l.eventoId];
-      if (!ev) return;
-      var data, ora, durata = Number(l.durata) || 60;
-      if (ev.isAllDayEvent()) {
-        data = Utilities.formatDate(ev.getAllDayStartDate(), tzScript, 'yyyy-MM-dd');
-        ora = '';
-      } else {
-        data = Utilities.formatDate(ev.getStartTime(), tz, 'yyyy-MM-dd');
-        ora = Utilities.formatDate(ev.getStartTime(), tz, 'HH:mm');
-        durata = Math.round((ev.getEndTime().getTime() - ev.getStartTime().getTime()) / 60000);
-      }
-      if (data !== l.data || ora !== l.ora || (ora && durata !== Number(l.durata))) {
-        l.data = data; l.ora = ora; l.durata = durata; l.aggiornato = iso;
-        db.storico.push({ quando: iso, id: l.id, titolo: l.titolo, chi: 'Calendario', azione: 'spostato da Google Calendar', dettaglio: data.split('-').reverse().join('/') + (ora ? ' alle ' + ora : '') });
-        cambiati++;
-      }
-    });
-    if (cambiati) {
-      var lock = LockService.getScriptLock();
-      lock.waitLock(20000);
-      try {
-        scriviLavori_(db.lavori);
-        scriviStorico_(db.storico.slice(n0));
-      } finally { lock.releaseLock(); }
-    }
-  } catch (e) {
-    Logger.log('Sincronizzazione calendario: ' + e);
-  }
-}
-
-/* Dal menu: rimette a posto tutti gli eventi (es. se hai cancellato il calendario) */
+/* Dal menu: rimette a posto tutti gli eventi */
 function riallineaCalendario() {
-  var db = leggiDb_();
+  var ss = SpreadsheetApp.getActive();
+  var imp = impostazioni_(ss);
+  var db = leggiDb_(ss, imp);
   var n = 0;
-  db.lavori.forEach(function (l) {
-    try { salvaEvento_(l); n++; } catch (e) { Logger.log(l.titolo + ': ' + e); }
-  });
-  scriviLavori_(db.lavori);
+  db.lavori.forEach(function (l) { try { salvaEvento_(l, imp); n++; } catch (e) { Logger.log(l.titolo + ': ' + e); } });
+  scriviLavori_(ss, db.lavori);
   try { SpreadsheetApp.getUi().alert('Eventi aggiornati: ' + n); } catch (e) { Logger.log(n); }
 }
 
-/* ---------- Avvisi via email ---------- */
-function inviaNotifiche_(r, chi) {
-  if (!r.notifiche.length) return;
-  var imp = impostazioni_();
-  if (/^n/i.test(imp['Email di avviso'] || '')) return;
-  var email = {};
-  leggiPersone_().forEach(function (p) { email[p.nome] = p.email; });
+/* ---------- Email (solo lavori nuovi, spostati, eliminati e risposte) ---------- */
+function inviaEmail_(r, chi, db, imp) {
+  if (!r.notifiche.length || /^n/i.test(imp['Email di avviso'] || '') || !r.lavoro) return;
+  var l = r.lavoro, email = {};
+  db.persone.forEach(function (p) { email[p.nome] = p.email; });
+  var testi = {
+    nuovo: ['📋 Nuovo lavoro: ', chi + ' ti chiede una mano.'],
+    spostato: ['📅 Lavoro spostato: ', chi + ' ha cambiato il giorno. Ci sei?'],
+    risposta_ok: ['✅ ' + chi + ' ci sta: ', chi + ' ha detto che va bene.'],
+    risposta_no: ['❌ ' + chi + ' non può: ', chi + ' non riesce.'],
+    risposta_altro: ['📅 ' + chi + ' propone un altro giorno: ', chi + ' preferisce un altro giorno.'],
+    eliminato: ['🗑️ Lavoro annullato: ', chi + ' ha tolto questo lavoro.']
+  };
+  var quando = l.data.split('-').reverse().join('/') + (l.ora ? ' alle ' + l.ora : { mattina: ' di mattina', pomeriggio: ' di pomeriggio' }[l.quando] || '');
   r.notifiche.forEach(function (n) {
-    var a = email[n.a];
-    if (!a) return;
-    var t = testoNotifica_(n.tipo, chi, r.lavoro);
-    MailApp.sendEmail({ to: a, subject: t.oggetto, htmlBody: htmlEmail_(t, r.lavoro, imp['Link app'], chi), name: 'Lavori di casa' });
+    var t = testi[n.tipo], a = email[n.a];
+    if (!t || !a) return;
+    var nota = (l.risposte[chi] || {}).nota;
+    var html = '<div style="font-family:Arial,sans-serif;font-size:17px;max-width:520px">' +
+      '<p>' + esc_(t[1]) + '</p><div style="background:#f3f4f8;border-radius:14px;padding:16px;margin:12px 0">' +
+      '<div style="font-size:22px;font-weight:bold">' + esc_(l.emoji + ' ' + l.titolo) + '</div>' +
+      '<div style="color:#5b6275;margin-top:6px">📅 ' + esc_(quando) + ' · 🙋 ' + esc_(l.assegnati.join(', ')) + '</div>' +
+      (nota ? '<p style="font-style:italic">💬 ' + esc_(nota) + '</p>' : '') + '</div>' +
+      (imp['Link app'] ? '<p><a href="' + imp['Link app'] + '" style="display:inline-block;background:#6d7cff;color:#fff;text-decoration:none;padding:14px 20px;border-radius:12px;font-weight:bold">Apri l\'app</a></p>' : '') +
+      '</div>';
+    MailApp.sendEmail({ to: a, subject: t[0] + l.titolo, htmlBody: html, name: 'Lavori di casa' });
   });
 }
-
-function testoNotifica_(tipo, chi, l) {
-  var T = {
-    nuovo: ['📋 Nuovo lavoro: ' + l.titolo, chi + ' ti ha chiesto una mano. Puoi accettare, dire che non puoi o proporre un altro giorno.'],
-    modificato: ['✏️ Lavoro cambiato: ' + l.titolo, chi + ' ha modificato il lavoro. Dai un\'occhiata e rispondi.'],
-    accetta: ['✅ ' + chi + ' ha accettato: ' + l.titolo, chi + ' ha detto che va bene.'],
-    rifiuta: ['❌ ' + chi + ' non può: ' + l.titolo, chi + ' non riesce a fare questo lavoro. Puoi cambiare giorno o persona.'],
-    data: ['📅 ' + chi + ' propone un altro giorno: ' + l.titolo, chi + ' propone un altro giorno. Accetti?'],
-    modifica: ['✏️ ' + chi + ' propone una modifica: ' + l.titolo, chi + ' propone di cambiare il lavoro. Accetti?'],
-    approvata: ['👍 Proposta accettata: ' + l.titolo, chi + ' ha accettato la tua proposta.'],
-    respinta: ['↩️ Proposta non accettata: ' + l.titolo, chi + ' preferisce lasciare il lavoro com\'era.'],
-    fatto: ['🎉 Fatto: ' + l.titolo, chi + ' ha segnato il lavoro come fatto.'],
-    eliminato: ['🗑️ Lavoro annullato: ' + l.titolo, chi + ' ha eliminato questo lavoro: non serve più farlo.'],
-    tolto: ['👋 Non sei più in questo lavoro: ' + l.titolo, chi + ' ha cambiato le persone del lavoro: non tocca più a te.']
-  }[tipo] || ['Lavori di casa: ' + l.titolo, 'Novità su un lavoro.'];
-  return { oggetto: T[0], intro: T[1] };
-}
-
-function htmlEmail_(t, l, link, chi) {
-  function e(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>'); }
-  var quando = l.data.split('-').reverse().join('/') + (l.ora ? ' alle ' + l.ora : '');
-  var prop = '', nota = l.nota;
-  var r = l.risposte && l.risposte[chi];
-  if (r) {
-    nota = r.nota;
-    if (r.propData) prop += '<p><b>Nuovo giorno proposto:</b> ' + e(r.propData.split('-').reverse().join('/') + (r.propOra ? ' alle ' + r.propOra : '')) + '</p>';
-    if (r.propTitolo) prop += '<p><b>Nuova versione:</b> ' + e(r.propTitolo) + (r.propDescrizione ? '<br>' + e(r.propDescrizione) : '') + '</p>';
-  }
-  return '<div style="font-family:Arial,sans-serif;max-width:520px;color:#1d2230">' +
-    '<p>' + e(t.intro) + '</p>' +
-    '<div style="background:#f3f4f8;border-radius:12px;padding:14px 16px;margin:12px 0">' +
-    '<div style="font-size:18px;font-weight:bold">' + e(l.titolo) + '</div>' +
-    '<div style="color:#5b6275;margin-top:4px">📅 ' + e(quando) + ' · per ' + e(l.assegnati.join(', ')) + '</div>' +
-    (l.descrizione ? '<p>' + e(l.descrizione) + '</p>' : '') + prop +
-    (nota ? '<p style="font-style:italic">“' + e(nota) + '”</p>' : '') +
-    '</div>' +
-    (link ? '<p><a href="' + link + '" style="display:inline-block;background:#7c8cff;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:bold">Apri l\'app e rispondi</a></p>' : '') +
-    '</div>';
-}
-
-function emailDiProva() {
-  var me = Session.getActiveUser().getEmail();
-  MailApp.sendEmail({ to: me, subject: '📋 Prova di Lavori di casa', htmlBody: '<p>Le email funzionano 👍</p>', name: 'Lavori di casa' });
-  try { SpreadsheetApp.getUi().alert('Email mandata a ' + me); } catch (e) { Logger.log(me); }
-}
+function esc_(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>'); }

@@ -1,12 +1,15 @@
-# Lavori di casa
+# 🏠 Lavori di casa · v2
 
-App per dividere i lavori di casa in famiglia, collegata a Google Calendar.
+App semplice per dividere i lavori di casa in famiglia.
 
-- Chi crea un lavoro sceglie giorno, ora (facoltativa), dettagli e **per chi** è: una o più persone.
-- Ognuna delle persone, per conto suo, può: **accettare**, **dire che non può**, **proporre un altro giorno** o **proporre una modifica**.
-- Chi l'ha creato accetta o no la proposta. Alla fine si segna **fatto**.
-- Ogni lavoro diventa un evento nel calendario Google **"Lavori di casa"** (colore = stato). Se lo sposti dal calendario, l'app se ne accorge.
-- Avvisi via **email** a ogni novità, numerino sull'icona dell'app e cronologia di ogni lavoro.
+- 🗓️ **Calendario in primo piano**: in ogni giorno vedi i lavori (con la loro emoji) e i pallini di chi è libero.
+- 🙋 **Giorni liberi**: ognuno segna la sua settimana tipo (☀️ tutto il giorno, 🌅 mattina, 🌇 pomeriggio, ❌ no) e può cambiare un singolo giorno.
+- ➕ **Nuovo lavoro**: emoji, cosa fare, giorno, quando (in giornata / mattina / pomeriggio / a un'ora) e per chi. Accanto a ogni persona vedi se quel giorno è libera.
+- ✅ ❌ 📅 **Risposte**: ognuno dice *Ci sto*, *Non posso* o propone *Un altro giorno*. Chi ha creato il lavoro lo sposta con un tocco.
+- ✔️ Alla fine si segna **fatto**.
+- 🔔 **Promemoria** nel calendario Google "Lavori di casa": il giorno prima alle 8 e 2 ore prima, sempre tra le 8 e le 22.
+- 📧 Email solo per lavori nuovi, spostati, eliminati e per le risposte (si possono spegnere).
+- 🎨 Chiara o scura: segue il telefono, oppure la scegli dalle impostazioni.
 
 I dati stanno solo nel foglio Google, protetto dal PIN di famiglia: in questo repository non c'è nessun dato.
 
@@ -15,7 +18,7 @@ I dati stanno solo nel foglio Google, protetto dal PIN di famiglia: in questo re
 | File | Cosa fa |
 |---|---|
 | `index.html`, `style.css`, `app.js` | L'app |
-| `logica.js` | Le regole dei lavori (le stesse usate dal foglio) |
+| `logica.js` | Le regole (le stesse usate dal foglio) |
 | `manifest.json`, `sw.js`, icone | Installazione sul telefono |
 | `apps-script/Codice.gs` | Il codice da incollare nell'Apps Script del foglio |
 
@@ -29,6 +32,14 @@ I dati stanno solo nel foglio Google, protetto dal PIN di famiglia: in questo re
 6. Nell'app: tocca il cerchio in alto a destra, incolla il link e il PIN, scegli chi sei.
 7. Dalle impostazioni tocca **Copia il link per la famiglia** e mandalo nel gruppo: aprendolo, l'app si collega da sola.
 8. In Google Calendar → impostazioni del calendario "Lavori di casa" → **Condividi con persone specifiche** (mamma e sorella).
+
+## 🔔 Promemoria per mamma e sorella
+
+Sul calendario condiviso Google usa le notifiche di ognuno, quindi vanno impostate una volta sola dal loro telefono:
+
+1. App **Google Calendar** → ☰ → **Impostazioni** → **Lavori di casa**.
+2. **Notifiche evento**: aggiungi *2 ore prima*.
+3. **Notifiche eventi di tutto il giorno**: aggiungi *1 giorno prima alle 08:00*.
 
 ## Aggiornamenti
 
