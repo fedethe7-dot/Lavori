@@ -6,6 +6,8 @@
  * Risposte: ognuno (tranne chi l'ha creato) risponde  ok / no / altro (propone un altro giorno).
  * Giorni liberi: ognuno ha una settimana tipo (lun..dom) e può cambiare singoli giorni (eccezioni).
  *   valori: 'tutto' | 'mattina' | 'pomeriggio' | 'no' | '' (non detto)
+ * Progetti (wishlist): lavori per la casa senza data, comuni a tutta la famiglia, con note, foto,
+ *   documenti (scontrini…) e articoli comprati. Un lavoro può essere "programmato" da un progetto (progettoId).
  */
 
 var FASCE = ['tutto', 'mattina', 'pomeriggio', 'no'];
@@ -48,8 +50,131 @@ function normalizza(j) {
   if (j.quando !== 'ora') j.ora = '';
   j.durata = Number(j.durata) > 0 ? Math.round(Number(j.durata)) : 60;
   j.emoji = _t(j.emoji) || '📋';
+  j.progettoId = _t(j.progettoId);
   j.stato = statoLavoro(j);
   return j;
+}
+
+/* ---------- Progetti ---------- */
+function _lista(v) {
+  if (typeof v === 'string') { try { v = JSON.parse(v || '[]'); } catch (e) { v = []; } }
+  return Array.isArray(v) ? v : [];
+}
+function _euro(v) {
+  var n = parseFloat(String(v == null ? '' : v).replace(/[€\s]/g, '').replace(',', '.'));
+  return isFinite(n) ? Math.round(n * 100) / 100 : 0;
+}
+function totaleProgetto(p) {
+  return Math.round(p.articoli.reduce(function (t, a) { return t + _euro(a.prezzo) * (Number(a.qta) || 1); }, 0) * 100) / 100;
+}
+function normalizzaProgetto(p) {
+  p.emoji = _t(p.emoji) || '💡';
+  p.titolo = _t(p.titolo);
+  p.descrizione = _t(p.descrizione);
+  p.stato = p.stato === 'fatto' ? 'fatto' : 'aperto';
+  p.note = _lista(p.note);
+  p.articoli = _lista(p.articoli);
+  p.allegati = _lista(p.allegati);
+  p.cartella = _t(p.cartella);
+  p.totale = totaleProgetto(p);
+  return p;
+}
+
+/**
+ * Azioni sui progetti. Restituisce { progetto, eliminato, cestina: [id file da buttare] }
+ * Tutti possono aggiungere note, foto, documenti e articoli; modifica ed eliminazione del progetto
+ * solo a chi l'ha creato e all'amministratore; ognuno può togliere le cose che ha aggiunto.
+ */
+function applicaProgetto(db, p, adesso, chi, capo) {
+  db.progetti = db.progetti || [];
+  var pr = null, cestina = [];
+  function trova() {
+    for (var i = 0; i < db.progetti.length; i++) if (db.progetti[i].id === p.progettoId) return normalizzaProgetto(db.progetti[i]);
+    throw new Error('Progetto non trovato: forse è stato eliminato 🔄');
+  }
+  function suo(x) { return x.chi === chi || pr.creatore === chi || capo; }
+  function togli(lista, id) {
+    for (var i = 0; i < lista.length; i++) if (lista[i].id === id) {
+      if (!suo(lista[i])) throw new Error('Può toglierlo solo chi l\'ha aggiunto');
+      return lista.splice(i, 1)[0];
+    }
+    throw new Error('Non c\'è più 🔄');
+  }
+  function campiProgetto() {
+    var c = { emoji: _t(p.emoji) || '💡', titolo: _t(p.titolo), descrizione: _t(p.descrizione) };
+    if (!c.titolo) throw new Error('Scrivi che lavoro è ✍️');
+    return c;
+  }
+
+  switch (p.action) {
+    case 'progetto_crea':
+      pr = campiProgetto();
+      pr.id = 'P' + nuovoId().slice(1); pr.stato = 'aperto'; pr.creatore = chi;
+      pr.note = []; pr.articoli = []; pr.allegati = []; pr.cartella = ''; pr.creato = adesso;
+      db.progetti.push(pr);
+      break;
+    case 'progetto_modifica': {
+      pr = trova();
+      if (chi !== pr.creatore && !capo) throw new Error('Solo ' + pr.creatore + ' può cambiarlo');
+      var c = campiProgetto();
+      Object.keys(c).forEach(function (k) { pr[k] = c[k]; });
+      break;
+    }
+    case 'progetto_stato':
+      pr = trova();
+      pr.stato = p.stato === 'fatto' ? 'fatto' : 'aperto';
+      break;
+    case 'progetto_elimina':
+      pr = trova();
+      if (chi !== pr.creatore && !capo) throw new Error('Solo ' + pr.creatore + ' può eliminarlo');
+      db.progetti.splice(db.progetti.indexOf(pr), 1);
+      pr.allegati.forEach(function (a) { if (a.fileId) cestina.push(a.fileId); });
+      (db.lavori || []).forEach(function (l) { if (l.progettoId === pr.id) l.progettoId = ''; });
+      return { progetto: pr, eliminato: true, cestina: cestina, lavoriToccati: true };
+    case 'nota_aggiungi': {
+      pr = trova();
+      var testo = _t(p.testo);
+      if (!testo) throw new Error('Scrivi la nota ✍️');
+      pr.note.push({ id: nuovoId(), chi: chi, data: adesso, testo: testo });
+      break;
+    }
+    case 'nota_elimina':
+      pr = trova(); togli(pr.note, p.id);
+      break;
+    case 'articolo_aggiungi': {
+      pr = trova();
+      var nome = _t(p.nome);
+      if (!nome) throw new Error('Scrivi cosa hai comprato 🛒');
+      var qta = Number(String(p.qta || '1').replace(',', '.'));
+      pr.articoli.push({ id: nuovoId(), chi: chi, data: adesso, nome: nome, qta: qta > 0 ? qta : 1,
+        prezzo: _euro(p.prezzo), negozio: _t(p.negozio) });
+      break;
+    }
+    case 'articolo_elimina':
+      pr = trova(); togli(pr.articoli, p.id);
+      break;
+    case 'allegato_aggiungi': {
+      pr = trova();
+      var f = p.file || {};
+      if (!f.url) throw new Error('File non caricato');
+      pr.allegati.push({ id: nuovoId(), chi: chi, data: adesso, tipo: f.tipo === 'foto' ? 'foto' : 'doc',
+        nome: _t(f.nome) || (f.tipo === 'foto' ? 'Foto' : 'Documento'), descrizione: _t(p.descrizione),
+        url: f.url, anteprima: _t(f.anteprima), fileId: _t(f.fileId), mime: _t(f.mime) });
+      if (f.cartella) pr.cartella = f.cartella;
+      break;
+    }
+    case 'allegato_elimina': {
+      pr = trova();
+      var via = togli(pr.allegati, p.id);
+      if (via.fileId) cestina.push(via.fileId);
+      break;
+    }
+    default:
+      throw new Error('Azione sconosciuta');
+  }
+  pr.aggiornato = adesso;
+  normalizzaProgetto(pr);
+  return { progetto: pr, eliminato: false, cestina: cestina };
 }
 
 /* ---------- Giorni liberi ---------- */
@@ -91,6 +216,12 @@ function applica(db, p, adesso) {
   var capo = chi === db.admin;
   var notifiche = [], calendario = null, j = null;
 
+  if (/^(progetto_|nota_|articolo_|allegato_)/.test(p.action || '')) {
+    var rp = applicaProgetto(db, p, adesso, chi, capo);
+    rp.lavoro = null; rp.notifiche = []; rp.calendario = null;
+    return rp;
+  }
+
   function avvisa(a, tipo) { if (a && a !== chi) notifiche.push({ a: a, tipo: tipo }); }
   function trova() {
     for (var i = 0; i < db.lavori.length; i++) if (db.lavori[i].id === p.id) return normalizza(db.lavori[i]);
@@ -104,7 +235,8 @@ function applica(db, p, adesso) {
     var c = {
       emoji: _t(p.emoji) || '📋', titolo: _t(p.titolo), descrizione: _t(p.descrizione),
       data: _t(p.data), quando: q, ora: q === 'ora' ? _t(p.ora) : '',
-      durata: Number(p.durata) > 0 ? Math.round(Number(p.durata)) : 60, assegnati: _nomi(p.assegnati)
+      durata: Number(p.durata) > 0 ? Math.round(Number(p.durata)) : 60, assegnati: _nomi(p.assegnati),
+      progettoId: _t(p.progettoId)
     };
     if (!c.titolo) throw new Error('Scrivi cosa c\'è da fare ✍️');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(c.data)) throw new Error('Scegli il giorno 📅');
@@ -223,5 +355,6 @@ function applica(db, p, adesso) {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { applica: applica, normalizza: normalizza, statoLavoro: statoLavoro, libero: libero,
-    liberaPer: liberaPer, fasciaLavoro: fasciaLavoro, giornoSett: giornoSett, FASCE: FASCE, ORE_FASCIA: ORE_FASCIA };
+    liberaPer: liberaPer, fasciaLavoro: fasciaLavoro, giornoSett: giornoSett, FASCE: FASCE, ORE_FASCIA: ORE_FASCIA,
+    normalizzaProgetto: normalizzaProgetto, applicaProgetto: applicaProgetto, totaleProgetto: totaleProgetto };
 }

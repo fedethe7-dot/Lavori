@@ -1,7 +1,8 @@
 'use strict';
 /* Lavori di casa v2 — interfaccia */
 
-const VERSIONE = '2.0';
+const VERSIONE = '2.1';
+const EMOJI_P = ['🎨', '🔨', '🪚', '🌳', '🪴', '💡', '🚿', '🛋️', '🧱', '🔌', '🪟', '🚪', '🏡', '🧰', '🧹', '📦'];
 const EMOJI = ['🧹', '🌿', '🛒', '🔧', '💡', '🧺', '🍽️', '🚗', '🐶', '🗑️', '📦', '🧽', '🪴', '🛠️', '🧯', '📋'];
 const STATO = {
   attesa: { t: 'In attesa', i: '⏳', c: 's-attesa' },
@@ -35,7 +36,7 @@ const S = {
   set(k, v) { try { localStorage.setItem('lavori2.' + k, JSON.stringify(v)); } catch (e) { /* niente */ } }
 };
 const cfg = { url: S.get('url', ''), pin: S.get('pin', ''), me: S.get('me', ''), tema: S.get('tema', 'auto') };
-const st = { lavori: [], persone: [], settimane: {}, eccezioni: {}, admin: '', view: ({ cal: 'liberi', list: 'home' })[S.get('view', 'home')] || S.get('view', 'home'),
+const st = { lavori: [], progetti: [], pstato: 'aperto', persone: [], settimane: {}, eccezioni: {}, admin: '', view: ({ cal: 'liberi', list: 'home' })[S.get('view', 'home')] || S.get('view', 'home'),
   mese: null, giorno: null, soloMiei: false, chiLiberi: '', occupato: 0, caricato: 0 };
 
 /* ---------- Utilità ---------- */
@@ -64,6 +65,8 @@ function quandoTesto(j) {
   if (j.quando === 'ora') return '🕐 ' + j.ora;
   return QUANDO_T[j.quando] || QUANDO_T.giornata;
 }
+const progetto = id => st.progetti.find(p => p.id === id);
+const euro = n => (Number(n) || 0).toLocaleString('it-IT', { style: 'currency', currency: 'EUR' });
 const persona = n => st.persone.find(p => p.nome === n) || { nome: n, colore: '#8b93a7' };
 const av = (n, cls = '') => `<span class="av ${cls}" style="background:${esc(persona(n).colore)}">${esc((n || '?').charAt(0).toUpperCase())}</span>`;
 const sonoCapo = () => cfg.me && cfg.me === st.admin;
@@ -89,12 +92,22 @@ const Prova = {
   },
   pacchetto(db) {
     const nomi = S.get('provaNomi', PROVA_NOMI);
-    return { ok: true, lavori: db.lavori, settimane: db.settimane, eccezioni: db.eccezioni, admin: db.admin,
+    return { ok: true, lavori: db.lavori, progetti: db.progetti || [], settimane: db.settimane, eccezioni: db.eccezioni, admin: db.admin,
       persone: nomi.map((n, i) => ({ nome: n, colore: COLORI[i % COLORI.length] })) };
   },
   async chiama(p) {
     const db = this.db();
-    if (p.action !== 'list') { applica(db, p); S.set('prova', db); }
+    db.progetti = db.progetti || [];
+    if (p.action === 'allegato_aggiungi' && p.base64) {        // in prova il file resta sul telefono
+      const url = `data:${p.mime};base64,${p.base64}`;
+      if (url.length > 1500000) throw new Error('In modalità prova i file devono essere piccoli: collega il foglio 🔗');
+      p = Object.assign({}, p, { file: { tipo: p.tipo, nome: p.nome, mime: p.mime, url, anteprima: /^image\//.test(p.mime) ? url : '' } });
+      delete p.base64;
+    }
+    if (p.action !== 'list') {
+      applica(db, p);
+      try { S.set('prova', db); localStorage.getItem('lavori2.prova'); } catch (e) { /* niente */ }
+    }
     return this.pacchetto(db);
   }
 };
@@ -115,12 +128,12 @@ const backend = () => (cfg.url ? Foglio : Prova);
 
 function datiDiProva() {
   const t = oggi();
-  const db = { lavori: [], settimane: {
+  const db = { lavori: [], progetti: [], settimane: {
     Federico: ['pomeriggio', 'pomeriggio', 'no', 'pomeriggio', 'pomeriggio', 'tutto', 'tutto'],
     Mamma: ['mattina', 'tutto', 'mattina', 'tutto', 'mattina', 'mattina', 'no'],
     Sorella: ['no', 'no', 'pomeriggio', 'no', 'pomeriggio', 'tutto', 'tutto']
   }, eccezioni: {}, admin: 'Federico' };
-  const fai = (chi, p) => applica(db, Object.assign({ chi }, p)).lavoro;
+  const fai = (chi, p) => { const r = applica(db, Object.assign({ chi }, p)); return r.lavoro || r.progetto; };
   fai('Mamma', { action: 'crea', emoji: '🌿', titolo: 'Tagliare l\'erba', descrizione: 'Davanti e dietro casa', data: piu(t, 2), quando: 'mattina', assegnati: ['Federico'] });
   const tav = fai('Federico', { action: 'crea', emoji: '🧹', titolo: 'Pulire la taverna', data: piu(t, 3), quando: 'pomeriggio', assegnati: ['Mamma', 'Sorella'] });
   fai('Mamma', { action: 'rispondi', id: tav.id, tipo: 'ok' });
@@ -128,6 +141,11 @@ function datiDiProva() {
   fai('Federico', { action: 'crea', emoji: '🛒', titolo: 'Spesa grande', descrizione: 'La lista è sul frigo', data: t, quando: 'ora', ora: '18:30', durata: 60, assegnati: ['Mamma'] });
   const lamp = fai('Mamma', { action: 'crea', emoji: '💡', titolo: 'Cambiare la lampadina', data: piu(t, -1), assegnati: ['Federico'] });
   fai('Federico', { action: 'fatto', id: lamp.id });
+  const pit = fai('Mamma', { action: 'progetto_crea', emoji: '🎨', titolo: 'Ridipingere la taverna', descrizione: 'Pareti color panna, soffitto bianco' });
+  fai('Federico', { action: 'nota_aggiungi', progettoId: pit.id, testo: 'Prima stuccare le crepe vicino alla finestra' });
+  fai('Mamma', { action: 'articolo_aggiungi', progettoId: pit.id, nome: 'Pittura lavabile 10 L', qta: 2, prezzo: '34,90', negozio: 'Brico' });
+  fai('Federico', { action: 'articolo_aggiungi', progettoId: pit.id, nome: 'Rullo e vaschetta', qta: 1, prezzo: '9,50' });
+  fai('Federico', { action: 'progetto_crea', emoji: '🪴', titolo: 'Aiuola davanti casa', descrizione: 'Togliere le erbacce e mettere i sassi bianchi' });
   return db;
 }
 
@@ -160,6 +178,7 @@ function azione(p, ok) {
 }
 function usa(d, daCache) {
   st.lavori = (d.lavori || []).map(normalizza);
+  st.progetti = (d.progetti || []).map(normalizzaProgetto);
   st.persone = d.persone || [];
   st.settimane = d.settimane || {};
   st.eccezioni = d.eccezioni || {};
@@ -186,8 +205,10 @@ function render() {
 
   document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('active', x.dataset.view === st.view));
   $('#fab').classList.toggle('hidden', st.view === 'fatti');
+  $('#fab').setAttribute('aria-label', st.view === 'progetti' ? 'Nuovo progetto' : 'Nuovo lavoro');
   if (st.view === 'liberi') renderLiberi();
   else if (st.view === 'fatti') renderFatti();
+  else if (st.view === 'progetti') renderProgetti();
   else renderHome();
 }
 
@@ -204,7 +225,7 @@ function riga(j, conGiorno) {
   return `<button class="job ${s.c} ${j.fatto ? 'done' : ''}" data-id="${esc(j.id)}">
     <span class="job-em">${esc(j.emoji)}</span>
     <span class="job-main"><span class="job-t">${esc(j.titolo)}</span>
-      <span class="job-m">${esc(quando)} · ${j.assegnati.map(n => av(n, 'sm')).join('')}</span>
+      <span class="job-m">${esc(quando)} · ${j.assegnati.map(n => av(n, 'sm')).join('')}${j.progettoId && progetto(j.progettoId) ? ' · 💡' : ''}</span>
       ${tocca ? '<span class="tocca">👉 Tocca a te rispondere</span>' : ''}</span>
     <span class="pill ${s.c}">${s.i}</span></button>`;
 }
@@ -429,6 +450,7 @@ function apriDettaglio(id) {
     <div class="det-t">${esc(j.titolo)}</div>
     <div class="det-w">📅 ${esc(giornoLungo(j.data))} · ${esc(quandoTesto(j))}${j.quando === 'ora' ? ` <span class="muted">(${esc((DURATE.find(d => d[0] === j.durata) || [0, j.durata + ' min'])[1])})</span>` : ''}</div>
     <div class="muted">✍️ Creato da ${esc(j.creatore)}</div>
+    ${j.progettoId && progetto(j.progettoId) ? `<button class="btn ghost sm" data-a="progetto">💡 Progetto: ${esc(progetto(j.progettoId).titolo)} ›</button>` : ''}
     ${j.descrizione ? `<div class="box"><div class="box-t">📝 Dettagli</div><div class="pre">${esc(j.descrizione)}</div></div>` : ''}
     <div class="box"><div class="box-t">🙋 Chi lo fa</div>${persone}</div>
     <div class="actions">${az.join('')}</div>`);
@@ -444,6 +466,7 @@ function apriDettaglio(id) {
     else if (a === 'fatto') { if (await azione({ action: 'fatto', id: j.id }, 'Fatto! 🎉')) chiudiPannello(); }
     else if (a === 'riapri') { if (await azione({ action: 'riapri', id: j.id }, 'Riaperto')) apriDettaglio(j.id); }
     else if (a === 'edita') formLavoro(j);
+    else if (a === 'progetto') apriProgetto(j.progettoId);
     else if (a === 'elimina') { if (confirm(`Eliminare "${j.titolo}"?`) && await azione({ action: 'elimina', id: j.id }, 'Eliminato 🗑️')) chiudiPannello(); }
   };
 }
@@ -488,12 +511,17 @@ function formAltroGiorno(j) {
 }
 
 /* ---------- Nuovo / modifica lavoro ---------- */
-function formLavoro(j, giorno) {
+function formLavoro(j, giorno, dalProgetto) {
   const nuovo = !j;
   const primo = (st.persone.find(p => p.nome !== cfg.me) || {}).nome || cfg.me;
-  const v = j || { emoji: '🧹', titolo: '', descrizione: '', data: giorno || oggi(), quando: 'giornata', ora: '', durata: 60, assegnati: primo ? [primo] : [] };
+  const v = j || { emoji: '🧹', titolo: '', descrizione: '', data: giorno || oggi(), quando: 'giornata', ora: '', durata: 60, assegnati: primo ? [primo] : [], progettoId: '' };
+  if (nuovo && dalProgetto) Object.assign(v, { emoji: EMOJI.includes(dalProgetto.emoji) ? dalProgetto.emoji : v.emoji, titolo: dalProgetto.titolo, descrizione: dalProgetto.descrizione, progettoId: dalProgetto.id });
+  let progettoId = v.progettoId || '';
+  const aperti = st.progetti.filter(p => p.stato !== 'fatto' || p.id === progettoId);
   apriPannello(`${testata(nuovo ? '➕ Nuovo lavoro' : '✏️ Modifica lavoro')}
     <form id="f" autocomplete="off">
+      ${aperti.length ? `<div class="lbl">💡 Dalla lista dei progetti <span class="muted small">(facoltativo)</span></div>
+      <select name="progetto"><option value="">— Nessun progetto —</option>${aperti.map(p => `<option value="${esc(p.id)}" ${p.id === progettoId ? 'selected' : ''}>${esc(p.emoji + ' ' + p.titolo)}</option>`).join('')}</select>` : ''}
       <div class="emojis">${EMOJI.map(e => `<label><input type="radio" name="emoji" value="${e}" ${e === v.emoji ? 'checked' : ''}><span>${e}</span></label>`).join('')}</div>
       <label>Cosa c'è da fare<input name="titolo" required maxlength="80" placeholder="Es. Tagliare l'erba" value="${esc(v.titolo)}"></label>
       <label>Giorno<input type="date" name="data" required value="${esc(v.data)}"></label>
@@ -522,6 +550,15 @@ function formLavoro(j, giorno) {
   const ora = () => { $('#rigaOra').classList.toggle('hidden', f.querySelector('input[name=quando]:checked').value !== 'ora'); disegnaPersone(); };
   f.addEventListener('change', ora);
   ora();
+  if (f.progetto) f.progetto.onchange = () => {
+    const pr = progetto(f.progetto.value);
+    progettoId = pr ? pr.id : '';
+    if (!pr) return;
+    f.titolo.value = pr.titolo;
+    if (!f.descrizione.value.trim()) f.descrizione.value = pr.descrizione;
+    const em = f.querySelector(`input[name=emoji][value="${pr.emoji}"]`);
+    if (em) em.checked = true;
+  };
   $('#perChi').onclick = e => {
     const c = e.target.closest('[data-persona]');
     if (!c) return;
@@ -529,23 +566,201 @@ function formLavoro(j, giorno) {
     scelti = scelti.includes(n) ? scelti.filter(x => x !== n) : scelti.concat(n);
     disegnaPersone();
   };
-  if (nuovo) setTimeout(() => f.titolo.focus(), 250);
+  if (nuovo && !dalProgetto) setTimeout(() => f.titolo.focus(), 250);
   f.onsubmit = async e => {
     e.preventDefault();
     const quando = f.querySelector('input[name=quando]:checked').value;
     if (!scelti.length) { $('#err').textContent = 'Scegli almeno una persona 🙋'; return; }
     if (quando === 'ora' && !f.ora.value) { $('#err').textContent = 'Scegli l\'ora 🕐'; return; }
     const dati = { emoji: f.querySelector('input[name=emoji]:checked').value, titolo: f.titolo.value, descrizione: f.descrizione.value,
-      data: f.data.value, quando, ora: f.ora.value, durata: f.durata.value, assegnati: scelti };
+      data: f.data.value, quando, ora: f.ora.value, durata: f.durata.value, assegnati: scelti, progettoId };
     const altri = scelti.filter(n => n !== cfg.me);
     const ok = await azione(Object.assign({ action: nuovo ? 'crea' : 'modifica', id: j && j.id }, dati),
       nuovo ? (altri.length ? `Inviato a ${altri.join(', ')} 📨` : 'Salvato 👍') : 'Salvato 👍');
+    if (ok && dalProgetto && progetto(dalProgetto.id)) { render(); apriProgetto(dalProgetto.id); return; }
     if (ok) {
       st.giorno = dati.data;
       const d = daYmd(dati.data); st.mese = new Date(d.getFullYear(), d.getMonth(), 1);
       chiudiPannello(); render();
     }
   };
+}
+
+/* ---------- 💡 Progetti: la lista comune dei lavori da fare per la casa ---------- */
+function rigaProgetto(p) {
+  const lav = st.lavori.filter(j => j.progettoId === p.id);
+  const prossimo = lav.filter(j => !j.fatto).sort(ordina)[0];
+  const foto = p.allegati.find(a => a.anteprima);
+  const meta = [];
+  if (p.note.length) meta.push('📝 ' + p.note.length);
+  if (p.allegati.length) meta.push('📎 ' + p.allegati.length);
+  if (p.articoli.length) meta.push('🛒 ' + euro(p.totale));
+  return `<button class="prj ${p.stato === 'fatto' ? 'done' : ''}" data-prj="${esc(p.id)}">
+    ${foto ? `<img class="prj-img" src="${esc(foto.anteprima)}" alt="" loading="lazy">` : `<span class="prj-em">${esc(p.emoji)}</span>`}
+    <span class="job-main"><span class="job-t">${esc(p.titolo)}</span>
+      <span class="job-m">${prossimo ? `📅 ${esc(giornoBreve(prossimo.data))}` : `✍️ ${esc(p.creatore)}`}${meta.length ? ' · ' + meta.join(' · ') : ''}</span></span>
+    <span class="chev">›</span></button>`;
+}
+function renderProgetti() {
+  const aperti = st.progetti.filter(p => p.stato !== 'fatto'), fatti = st.progetti.filter(p => p.stato === 'fatto');
+  const L = (st.pstato === 'fatto' ? fatti : aperti).slice().sort((a, b) => String(b.aggiornato || b.creato).localeCompare(String(a.aggiornato || a.creato)));
+  let h = `<div class="seg big2">
+    <button class="${st.pstato !== 'fatto' ? 'on' : ''}" data-pstato="aperto">💡 Da fare (${aperti.length})</button>
+    <button class="${st.pstato === 'fatto' ? 'on' : ''}" data-pstato="fatto">✔️ Completati (${fatti.length})</button></div>`;
+  h += L.length ? `<div class="box"><div class="box-t">${st.pstato === 'fatto' ? '✔️ Progetti completati' : '💡 Lavori da fare per la casa'}</div>
+      <div class="muted small" style="margin:-4px 0 8px">La lista è di tutta la famiglia: tutti vedono e possono aggiungere note, foto e spese.</div>${L.map(rigaProgetto).join('')}</div>`
+    : `<div class="empty big">${st.pstato === 'fatto' ? 'Nessun progetto completato' : 'La lista è vuota 🏡<br><span class="muted">Tocca ＋ per aggiungere un lavoro da fare, anche senza data</span>'}</div>`;
+  $('#main').innerHTML = h;
+}
+
+function formProgetto(p) {
+  const nuovo = !p;
+  const v = p || { emoji: '🎨', titolo: '', descrizione: '' };
+  const emo = EMOJI_P.includes(v.emoji) ? EMOJI_P : [v.emoji].concat(EMOJI_P.slice(0, 15));
+  apriPannello(`${testata(nuovo ? '💡 Nuovo progetto' : '✏️ Modifica progetto')}
+    <form id="f" autocomplete="off">
+      <div class="emojis">${emo.map(e => `<label><input type="radio" name="emoji" value="${e}" ${e === v.emoji ? 'checked' : ''}><span>${e}</span></label>`).join('')}</div>
+      <label>Che lavoro è<input name="titolo" required maxlength="80" placeholder="Es. Ridipingere la taverna" value="${esc(v.titolo)}"></label>
+      <label>Dettagli <span class="muted small">(facoltativi)</span><textarea name="descrizione" rows="3" placeholder="Cosa serve, idee, misure…">${esc(v.descrizione)}</textarea></label>
+      <div class="muted small">Niente data: la scegli quando lo programmi. Note, foto, scontrini e spese li aggiungi dopo.</div>
+      <button class="btn main big" type="submit">${nuovo ? '💡 Aggiungi alla lista' : '💾 Salva'}</button>
+    </form>`);
+  const f = $('#f');
+  if (nuovo) setTimeout(() => f.titolo.focus(), 250);
+  f.onsubmit = async e => {
+    e.preventDefault();
+    const dati = { emoji: f.querySelector('input[name=emoji]:checked').value, titolo: f.titolo.value, descrizione: f.descrizione.value };
+    const prima = new Set(st.progetti.map(x => x.id));
+    const ok = await azione(Object.assign({ action: nuovo ? 'progetto_crea' : 'progetto_modifica', progettoId: p && p.id }, dati), nuovo ? 'Aggiunto alla lista 💡' : 'Salvato 👍');
+    if (!ok) return;
+    const id = nuovo ? (st.progetti.find(x => !prima.has(x.id)) || {}).id : p.id;
+    st.view = 'progetti'; st.pstato = 'aperto'; S.set('view', st.view); render();
+    if (id) apriProgetto(id); else chiudiPannello();
+  };
+}
+
+const quandoBreve = iso => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('it-IT', { day: 'numeric', month: 'short' }); };
+function apriProgetto(id, tieniScroll) {
+  const p = progetto(id);
+  if (!p) { chiudiPannello(); return; }
+  const y = tieniScroll ? $('#sheet').scrollTop : 0;
+  const gestisco = p.creatore === cfg.me || sonoCapo();
+  const suo = x => x.chi === cfg.me || gestisco;
+  const lav = st.lavori.filter(j => j.progettoId === p.id).sort(ordina);
+  const foto = p.allegati.filter(a => a.tipo === 'foto' || (a.anteprima && /^image\//.test(a.mime)));
+  const doc = p.allegati.filter(a => !foto.includes(a));
+  apriPannello(`<div class="sheet-h"><span class="pill ${p.stato === 'fatto' ? 's-fatto' : 's-altro'}">${p.stato === 'fatto' ? '✔️ Completato' : '💡 Da fare'}</span><button class="x" data-close aria-label="Chiudi">×</button></div>
+    <div class="det-em">${esc(p.emoji)}</div>
+    <div class="det-t">${esc(p.titolo)}</div>
+    <div class="muted">✍️ Aggiunto da ${esc(p.creatore)}${p.creato ? ' il ' + esc(quandoBreve(p.creato)) : ''}</div>
+    ${p.descrizione ? `<div class="box"><div class="box-t">📋 Dettagli</div><div class="pre">${esc(p.descrizione)}</div></div>` : ''}
+
+    <div class="box"><div class="box-t">📅 Quando si fa</div>
+      ${lav.map(j => riga(j, true)).join('') || '<div class="muted">Non è ancora in calendario.</div>'}
+      ${p.stato !== 'fatto' ? '<button class="btn main" data-a="programma">📅 Programma: scegli giorno e chi</button>' : ''}</div>
+
+    <div class="box"><div class="box-t">📝 Note</div>
+      ${p.note.map(n => `<div class="nota"><div class="nota-h">${av(n.chi, 'xs')}<b>${esc(n.chi)}</b><span class="muted small">${esc(quandoBreve(n.data))}</span>${suo(n) ? `<button class="x sm" data-del-nota="${esc(n.id)}" aria-label="Togli nota">×</button>` : ''}</div><div class="pre">${esc(n.testo)}</div></div>`).join('') || '<div class="muted">Ancora nessuna nota.</div>'}
+      <form id="fNota" class="mini"><textarea name="testo" rows="2" placeholder="Scrivi una nota per tutti…"></textarea><button class="btn sm" type="submit">➕ Aggiungi nota</button></form></div>
+
+    <div class="box"><div class="box-t">📷 Foto e documenti</div>
+      ${foto.length ? `<div class="gal">${foto.map(a => `<div class="gal-i"><a href="${esc(a.url)}" target="_blank" rel="noopener"><img src="${esc(a.anteprima || a.url)}" alt="${esc(a.descrizione || a.nome)}" loading="lazy"></a>${suo(a) ? `<button class="x sm gal-x" data-del-all="${esc(a.id)}" aria-label="Togli foto">×</button>` : ''}${a.descrizione ? `<div class="gal-d">${esc(a.descrizione)}</div>` : ''}</div>`).join('')}</div>` : ''}
+      ${doc.map(a => `<div class="doc"><a href="${esc(a.url)}" target="_blank" rel="noopener">${/pdf/.test(a.mime) ? '📄' : /^image\//.test(a.mime) ? '🧾' : '📎'} <b>${esc(a.nome)}</b>${a.descrizione ? `<span class="muted small"> · ${esc(a.descrizione)}</span>` : ''}<span class="muted small"> · ${esc(a.chi)}, ${esc(quandoBreve(a.data))}</span></a>${suo(a) ? `<button class="x sm" data-del-all="${esc(a.id)}" aria-label="Togli documento">×</button>` : ''}</div>`).join('')}
+      ${!foto.length && !doc.length ? '<div class="muted">Nessuna foto o documento.</div>' : ''}
+      <div class="row2"><button class="btn sm" data-a="foto">📷 Foto</button><button class="btn sm" data-a="doc">🧾 Scontrino / PDF</button></div>
+      <div class="muted small center" id="caric"></div></div>
+
+    <div class="box"><div class="box-t">🛒 Cosa abbiamo comprato <span class="tot">${euro(p.totale)}</span></div>
+      ${p.articoli.map(a => `<div class="art"><div class="art-m"><b>${esc(a.nome)}</b><span class="muted small">${a.qta !== 1 ? esc(String(a.qta).replace('.', ',')) + ' × ' + esc(euro(a.prezzo)) + ' · ' : ''}${a.negozio ? esc(a.negozio) + ' · ' : ''}${esc(a.chi)}</span></div><b class="art-p">${esc(euro(a.prezzo * (a.qta || 1)))}</b>${suo(a) ? `<button class="x sm" data-del-art="${esc(a.id)}" aria-label="Togli articolo">×</button>` : ''}</div>`).join('') || '<div class="muted">Ancora niente.</div>'}
+      <form id="fArt" class="mini">
+        <input name="nome" placeholder="Cosa (es. pittura 10 L)" maxlength="80">
+        <div class="row3"><input name="qta" inputmode="decimal" placeholder="Quanti" value="1"><input name="prezzo" inputmode="decimal" placeholder="€ cad."><input name="negozio" placeholder="Dove"></div>
+        <button class="btn sm" type="submit">➕ Aggiungi spesa</button></form></div>
+
+    <div class="actions">
+      ${p.stato !== 'fatto' ? btn('completa', '✔️ Progetto completato', 'ok') : btn('riapri', '↺ Rimetti tra i da fare')}
+      ${gestisco ? `<div class="row2">${btn('edita', '✏️ Modifica', 'ghost')}${btn('elimina', '🗑️ Elimina', 'ghost danger')}</div>` : ''}
+    </div>`);
+  $('#sheet').scrollTop = y;
+
+  const ricarica = ok => { if (ok) apriProgetto(id, true); };
+  $('#fNota').onsubmit = async e => {
+    e.preventDefault();
+    const t = e.target.testo.value.trim();
+    if (!t) return toast('Scrivi la nota ✍️', true);
+    ricarica(await azione({ action: 'nota_aggiungi', progettoId: id, testo: t }, 'Nota aggiunta 📝'));
+  };
+  $('#fArt').onsubmit = async e => {
+    e.preventDefault();
+    const f = e.target;
+    if (!f.nome.value.trim()) return toast('Scrivi cosa hai comprato 🛒', true);
+    ricarica(await azione({ action: 'articolo_aggiungi', progettoId: id, nome: f.nome.value, qta: f.qta.value, prezzo: f.prezzo.value, negozio: f.negozio.value }, 'Spesa aggiunta 🛒'));
+  };
+  $('#sheet').onclick = async e => {
+    const t = e.target, q = s => t.closest(s);
+    let x;
+    if ((x = q('.job[data-id]'))) return apriDettaglio(x.dataset.id);
+    if ((x = q('[data-del-nota]'))) { if (confirm('Togliere la nota?')) ricarica(await azione({ action: 'nota_elimina', progettoId: id, id: x.dataset.delNota }, 'Tolta')); return; }
+    if ((x = q('[data-del-art]'))) { if (confirm('Togliere questa spesa?')) ricarica(await azione({ action: 'articolo_elimina', progettoId: id, id: x.dataset.delArt }, 'Tolta')); return; }
+    if ((x = q('[data-del-all]'))) { e.preventDefault(); if (confirm('Togliere il file?')) ricarica(await azione({ action: 'allegato_elimina', progettoId: id, id: x.dataset.delAll }, 'Tolto 🗑️')); return; }
+    const b = q('[data-a]');
+    if (!b) return;
+    const a = b.dataset.a;
+    if (a === 'programma') formLavoro(null, oggi(), p);
+    else if (a === 'foto' || a === 'doc') scegliFile(id, a);
+    else if (a === 'completa') { if (await azione({ action: 'progetto_stato', progettoId: id, stato: 'fatto' }, 'Completato! 🎉')) { st.pstato = 'fatto'; chiudiPannello(); render(); } }
+    else if (a === 'riapri') ricarica(await azione({ action: 'progetto_stato', progettoId: id, stato: 'aperto' }, 'Di nuovo tra i da fare'));
+    else if (a === 'edita') formProgetto(p);
+    else if (a === 'elimina') {
+      if (confirm(`Eliminare "${p.titolo}" con note, foto e spese?`) && await azione({ action: 'progetto_elimina', progettoId: id }, 'Eliminato 🗑️')) chiudiPannello();
+    }
+  };
+}
+
+/* Foto (ridotta per non pesare) o documento, caricati sul Drive del foglio */
+function scegliFile(progettoId, tipo) {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = tipo === 'foto' ? 'image/*' : 'image/*,application/pdf';
+  inp.onchange = async () => {
+    const file = inp.files[0];
+    if (!file) return;
+    const box = $('#caric');
+    try {
+      if (box) box.textContent = '⏳ Preparo il file…';
+      const dati = await leggiFile(file, tipo);
+      const descrizione = tipo === 'doc' ? (prompt('Che documento è? (es. scontrino Brico)', file.name.replace(/\.[^.]+$/, '')) || '') : '';
+      if (box) box.textContent = '⏳ Carico… può volerci qualche secondo';
+      const ok = await azione(Object.assign({ action: 'allegato_aggiungi', progettoId, tipo: tipo === 'foto' ? 'foto' : 'doc', descrizione }, dati), tipo === 'foto' ? 'Foto aggiunta 📷' : 'Documento aggiunto 🧾');
+      if (ok && progetto(progettoId)) apriProgetto(progettoId, true);
+    } catch (err) { toast(err.message, true); }
+    finally { const b = $('#caric'); if (b) b.textContent = ''; }
+  };
+  inp.click();
+}
+function leggiFile(file, tipo) {
+  return new Promise((ok, ko) => {
+    const nome = file.name || (tipo === 'foto' ? 'Foto' : 'Documento');
+    if (/^image\//.test(file.type)) {
+      const url = URL.createObjectURL(file), img = new Image();
+      img.onload = () => {
+        const M = 1600, k = Math.min(1, M / Math.max(img.width, img.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url);
+        ok({ nome: nome.replace(/\.[^.]+$/, '') + '.jpg', mime: 'image/jpeg', base64: c.toDataURL('image/jpeg', 0.82).split(',')[1] });
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); ko(new Error('Non riesco ad aprire questa immagine')); };
+      img.src = url;
+      return;
+    }
+    if (file.size > 15 * 1024 * 1024) return ko(new Error('File troppo grande (massimo 15 MB)'));
+    const r = new FileReader();
+    r.onload = () => ok({ nome, mime: file.type || 'application/octet-stream', base64: String(r.result).split(',')[1] });
+    r.onerror = () => ko(new Error('Non riesco a leggere il file'));
+    r.readAsDataURL(file);
+  });
 }
 
 /* ---------- Impostazioni ---------- */
@@ -649,6 +864,8 @@ document.addEventListener('click', e => {
   if (q('[data-go]')) return apriImpostazioni();
   if ((x = q('[data-vai]'))) { st.view = x.dataset.vai; S.set('view', st.view); return render(); }
   if ((x = q('.job[data-id]'))) return apriDettaglio(x.dataset.id);
+  if ((x = q('.prj[data-prj]'))) return apriProgetto(x.dataset.prj);
+  if ((x = q('[data-pstato]'))) { st.pstato = x.dataset.pstato; return render(); }
   if ((x = q('#tabs button'))) { st.view = x.dataset.view; S.set('view', st.view); window.scrollTo(0, 0); return render(); }
   if ((x = q('.cell[data-giorno]'))) {
     st.giorno = x.dataset.giorno;
@@ -678,7 +895,7 @@ document.addEventListener('touchend', e => {
   if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) cambiaMese(dx < 0 ? 1 : -1);
 }, { passive: true });
 
-$('#fab').onclick = () => formLavoro(null, st.view === 'liberi' ? st.giorno : oggi());
+$('#fab').onclick = () => (st.view === 'progetti' ? formProgetto() : formLavoro(null, st.view === 'liberi' ? st.giorno : oggi()));
 $('#btnSync').onclick = () => carica();
 $('#btnMe').onclick = () => apriImpostazioni();
 // riaprendo l'app si aggiorna da sola (al massimo una volta al minuto)

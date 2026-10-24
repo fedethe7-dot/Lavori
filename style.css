@@ -243,6 +243,32 @@ textarea { resize: vertical; }
 .toast { position: fixed; left: 50%; transform: translateX(-50%); top: calc(12px + env(safe-area-inset-top)); background: var(--text); color: var(--bg); padding: 12px 18px; border-radius: 14px; font-weight: 600; z-index: 20; max-width: calc(100% - 32px); text-align: center; box-shadow: 0 6px 20px rgba(0, 0, 0, .25); }
 .toast.bad { background: var(--no); color: #fff; }
 
+/* Progetti */
+.prj { display: flex; align-items: center; gap: 12px; width: 100%; border: 0; text-align: left; background: var(--card2); border-radius: 16px; padding: 10px 12px; margin: 0 0 8px; min-height: 72px; border-left: 6px solid var(--accent); }
+.prj.done { border-left-color: var(--done); }
+.prj.done .job-t { color: var(--muted); }
+.prj-em { font-size: 2rem; line-height: 1; flex: none; width: 52px; text-align: center; }
+.prj-img { width: 52px; height: 52px; border-radius: 12px; object-fit: cover; flex: none; background: var(--card); }
+.chev { color: var(--muted); font-size: 1.6rem; flex: none; }
+.nota { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.nota:last-of-type { border-bottom: 0; }
+.nota-h { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.nota-h b { flex: 1; }
+form.mini textarea, form.mini input { margin-top: 8px; min-height: 48px; font-size: 1rem; padding: 10px 12px; }
+.row3 { display: grid; grid-template-columns: 1fr 1.2fr 1.4fr; gap: 8px; }
+.gal { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 8px; }
+.gal-i { position: relative; }
+.gal-i img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 12px; display: block; background: var(--card); }
+.gal-x { position: absolute; top: 4px; right: 4px; width: 32px; height: 32px; font-size: 1.1rem; background: rgba(0, 0, 0, .55); color: #fff; }
+.gal-d { font-size: .75rem; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
+.doc { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.doc a { flex: 1; min-width: 0; color: inherit; text-decoration: none; overflow-wrap: anywhere; }
+.art { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.art-m { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.art-p { white-space: nowrap; }
+.tot { float: right; color: var(--accent); }
+.tabs button { font-size: .8rem; }
+
 @media (max-width: 380px) {
   html { font-size: 17px; }
   .cell { min-height: 60px; }

@@ -1,4 +1,4 @@
-# 🏠 Lavori di casa · v2
+# 🏠 Lavori di casa · v2.1
 
 App semplice per dividere i lavori di casa in famiglia.
 
@@ -7,6 +7,7 @@ App semplice per dividere i lavori di casa in famiglia.
 - ➕ **Nuovo lavoro**: emoji, cosa fare, giorno, quando (in giornata / mattina / pomeriggio / a un'ora) e per chi. Accanto a ogni persona vedi se quel giorno è libera.
 - ✅ ❌ 📅 **Risposte**: ognuno dice *Ci sto*, *Non posso* o propone *Un altro giorno*. Chi ha creato il lavoro lo sposta con un tocco.
 - ✔️ Alla fine si segna **fatto**.
+- 💡 **Progetti**: la lista comune dei lavori da fare per la casa, **senza data**. Ognuno può aggiungere note, foto, scontrini/PDF e le spese (cosa, quanti, prezzo, dove) con il totale. Quando si decide, **📅 Programma**: si sceglie solo il giorno e chi partecipa, il resto è già compilato. Anche dal ＋ normale si può scegliere un progetto dalla tendina.
 - 🔔 **Promemoria** nel calendario Google "Lavori di casa": il giorno prima alle 8 e 2 ore prima, sempre tra le 8 e le 22.
 - 📧 Email solo per lavori nuovi, spostati, eliminati e per le risposte (si possono spegnere).
 - 🎨 Chiara o scura: segue il telefono, oppure la scegli dalle impostazioni.
@@ -32,6 +33,14 @@ I dati stanno solo nel foglio Google, protetto dal PIN di famiglia: in questo re
 6. Nell'app: tocca il cerchio in alto a destra, incolla il link e il PIN, scegli chi sei.
 7. Dalle impostazioni tocca **Copia il link per la famiglia** e mandalo nel gruppo: aprendolo, l'app si collega da sola.
 8. In Google Calendar → impostazioni del calendario "Lavori di casa" → **Condividi con persone specifiche** (mamma e sorella).
+
+## 💡 Aggiornare a v2.1 (Progetti) un foglio già in uso
+
+1. **Estensioni → Apps Script**: sostituisci tutto con il nuovo `apps-script/Codice.gs` e salva.
+2. Scegli la funzione **preparaProgetti** e premi **Esegui**: Google chiede il permesso per **Drive** (serve per foto e scontrini). Crea la scheda **Progetti** e la cartella Drive *Lavori di casa - Progetti*.
+3. **Esegui il deployment → Gestisci deployment → Modifica → Nuova versione** (il link resta uguale).
+
+Le foto e i documenti stanno su Drive, visibili solo a chi ha il link del file (serve per vederli nell'app).
 
 ## 🔔 Promemoria per mamma e sorella
 

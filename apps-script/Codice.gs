@@ -1,4 +1,4 @@
-/* Lavori di casa — Codice.gs v2.0 (regole + server). Incolla TUTTO questo nell'editor Apps Script. */
+/* Lavori di casa — Codice.gs v2.1 (regole + server). Incolla TUTTO questo nell'editor Apps Script. */
 
 /*
  * Lavori di casa v2 — le regole.
@@ -8,6 +8,8 @@
  * Risposte: ognuno (tranne chi l'ha creato) risponde  ok / no / altro (propone un altro giorno).
  * Giorni liberi: ognuno ha una settimana tipo (lun..dom) e può cambiare singoli giorni (eccezioni).
  *   valori: 'tutto' | 'mattina' | 'pomeriggio' | 'no' | '' (non detto)
+ * Progetti (wishlist): lavori per la casa senza data, comuni a tutta la famiglia, con note, foto,
+ *   documenti (scontrini…) e articoli comprati. Un lavoro può essere "programmato" da un progetto (progettoId).
  */
 
 var FASCE = ['tutto', 'mattina', 'pomeriggio', 'no'];
@@ -50,8 +52,131 @@ function normalizza(j) {
   if (j.quando !== 'ora') j.ora = '';
   j.durata = Number(j.durata) > 0 ? Math.round(Number(j.durata)) : 60;
   j.emoji = _t(j.emoji) || '📋';
+  j.progettoId = _t(j.progettoId);
   j.stato = statoLavoro(j);
   return j;
+}
+
+/* ---------- Progetti ---------- */
+function _lista(v) {
+  if (typeof v === 'string') { try { v = JSON.parse(v || '[]'); } catch (e) { v = []; } }
+  return Array.isArray(v) ? v : [];
+}
+function _euro(v) {
+  var n = parseFloat(String(v == null ? '' : v).replace(/[€\s]/g, '').replace(',', '.'));
+  return isFinite(n) ? Math.round(n * 100) / 100 : 0;
+}
+function totaleProgetto(p) {
+  return Math.round(p.articoli.reduce(function (t, a) { return t + _euro(a.prezzo) * (Number(a.qta) || 1); }, 0) * 100) / 100;
+}
+function normalizzaProgetto(p) {
+  p.emoji = _t(p.emoji) || '💡';
+  p.titolo = _t(p.titolo);
+  p.descrizione = _t(p.descrizione);
+  p.stato = p.stato === 'fatto' ? 'fatto' : 'aperto';
+  p.note = _lista(p.note);
+  p.articoli = _lista(p.articoli);
+  p.allegati = _lista(p.allegati);
+  p.cartella = _t(p.cartella);
+  p.totale = totaleProgetto(p);
+  return p;
+}
+
+/**
+ * Azioni sui progetti. Restituisce { progetto, eliminato, cestina: [id file da buttare] }
+ * Tutti possono aggiungere note, foto, documenti e articoli; modifica ed eliminazione del progetto
+ * solo a chi l'ha creato e all'amministratore; ognuno può togliere le cose che ha aggiunto.
+ */
+function applicaProgetto(db, p, adesso, chi, capo) {
+  db.progetti = db.progetti || [];
+  var pr = null, cestina = [];
+  function trova() {
+    for (var i = 0; i < db.progetti.length; i++) if (db.progetti[i].id === p.progettoId) return normalizzaProgetto(db.progetti[i]);
+    throw new Error('Progetto non trovato: forse è stato eliminato 🔄');
+  }
+  function suo(x) { return x.chi === chi || pr.creatore === chi || capo; }
+  function togli(lista, id) {
+    for (var i = 0; i < lista.length; i++) if (lista[i].id === id) {
+      if (!suo(lista[i])) throw new Error('Può toglierlo solo chi l\'ha aggiunto');
+      return lista.splice(i, 1)[0];
+    }
+    throw new Error('Non c\'è più 🔄');
+  }
+  function campiProgetto() {
+    var c = { emoji: _t(p.emoji) || '💡', titolo: _t(p.titolo), descrizione: _t(p.descrizione) };
+    if (!c.titolo) throw new Error('Scrivi che lavoro è ✍️');
+    return c;
+  }
+
+  switch (p.action) {
+    case 'progetto_crea':
+      pr = campiProgetto();
+      pr.id = 'P' + nuovoId().slice(1); pr.stato = 'aperto'; pr.creatore = chi;
+      pr.note = []; pr.articoli = []; pr.allegati = []; pr.cartella = ''; pr.creato = adesso;
+      db.progetti.push(pr);
+      break;
+    case 'progetto_modifica': {
+      pr = trova();
+      if (chi !== pr.creatore && !capo) throw new Error('Solo ' + pr.creatore + ' può cambiarlo');
+      var c = campiProgetto();
+      Object.keys(c).forEach(function (k) { pr[k] = c[k]; });
+      break;
+    }
+    case 'progetto_stato':
+      pr = trova();
+      pr.stato = p.stato === 'fatto' ? 'fatto' : 'aperto';
+      break;
+    case 'progetto_elimina':
+      pr = trova();
+      if (chi !== pr.creatore && !capo) throw new Error('Solo ' + pr.creatore + ' può eliminarlo');
+      db.progetti.splice(db.progetti.indexOf(pr), 1);
+      pr.allegati.forEach(function (a) { if (a.fileId) cestina.push(a.fileId); });
+      (db.lavori || []).forEach(function (l) { if (l.progettoId === pr.id) l.progettoId = ''; });
+      return { progetto: pr, eliminato: true, cestina: cestina, lavoriToccati: true };
+    case 'nota_aggiungi': {
+      pr = trova();
+      var testo = _t(p.testo);
+      if (!testo) throw new Error('Scrivi la nota ✍️');
+      pr.note.push({ id: nuovoId(), chi: chi, data: adesso, testo: testo });
+      break;
+    }
+    case 'nota_elimina':
+      pr = trova(); togli(pr.note, p.id);
+      break;
+    case 'articolo_aggiungi': {
+      pr = trova();
+      var nome = _t(p.nome);
+      if (!nome) throw new Error('Scrivi cosa hai comprato 🛒');
+      var qta = Number(String(p.qta || '1').replace(',', '.'));
+      pr.articoli.push({ id: nuovoId(), chi: chi, data: adesso, nome: nome, qta: qta > 0 ? qta : 1,
+        prezzo: _euro(p.prezzo), negozio: _t(p.negozio) });
+      break;
+    }
+    case 'articolo_elimina':
+      pr = trova(); togli(pr.articoli, p.id);
+      break;
+    case 'allegato_aggiungi': {
+      pr = trova();
+      var f = p.file || {};
+      if (!f.url) throw new Error('File non caricato');
+      pr.allegati.push({ id: nuovoId(), chi: chi, data: adesso, tipo: f.tipo === 'foto' ? 'foto' : 'doc',
+        nome: _t(f.nome) || (f.tipo === 'foto' ? 'Foto' : 'Documento'), descrizione: _t(p.descrizione),
+        url: f.url, anteprima: _t(f.anteprima), fileId: _t(f.fileId), mime: _t(f.mime) });
+      if (f.cartella) pr.cartella = f.cartella;
+      break;
+    }
+    case 'allegato_elimina': {
+      pr = trova();
+      var via = togli(pr.allegati, p.id);
+      if (via.fileId) cestina.push(via.fileId);
+      break;
+    }
+    default:
+      throw new Error('Azione sconosciuta');
+  }
+  pr.aggiornato = adesso;
+  normalizzaProgetto(pr);
+  return { progetto: pr, eliminato: false, cestina: cestina };
 }
 
 /* ---------- Giorni liberi ---------- */
@@ -93,6 +218,12 @@ function applica(db, p, adesso) {
   var capo = chi === db.admin;
   var notifiche = [], calendario = null, j = null;
 
+  if (/^(progetto_|nota_|articolo_|allegato_)/.test(p.action || '')) {
+    var rp = applicaProgetto(db, p, adesso, chi, capo);
+    rp.lavoro = null; rp.notifiche = []; rp.calendario = null;
+    return rp;
+  }
+
   function avvisa(a, tipo) { if (a && a !== chi) notifiche.push({ a: a, tipo: tipo }); }
   function trova() {
     for (var i = 0; i < db.lavori.length; i++) if (db.lavori[i].id === p.id) return normalizza(db.lavori[i]);
@@ -106,7 +237,8 @@ function applica(db, p, adesso) {
     var c = {
       emoji: _t(p.emoji) || '📋', titolo: _t(p.titolo), descrizione: _t(p.descrizione),
       data: _t(p.data), quando: q, ora: q === 'ora' ? _t(p.ora) : '',
-      durata: Number(p.durata) > 0 ? Math.round(Number(p.durata)) : 60, assegnati: _nomi(p.assegnati)
+      durata: Number(p.durata) > 0 ? Math.round(Number(p.durata)) : 60, assegnati: _nomi(p.assegnati),
+      progettoId: _t(p.progettoId)
     };
     if (!c.titolo) throw new Error('Scrivi cosa c\'è da fare ✍️');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(c.data)) throw new Error('Scegli il giorno 📅');
@@ -226,17 +358,23 @@ function applica(db, p, adesso) {
 
 /* =====================================================================
  * Lavori di casa v2 — server sul foglio Google
- * Schede: Lavori, Persone, Giorni liberi, Eccezioni, Impostazioni
+ * Schede: Lavori, Progetti, Persone, Giorni liberi, Eccezioni, Impostazioni
+ * Foto e documenti dei progetti: su Google Drive, cartella "Lavori di casa - Progetti" (una sottocartella per progetto).
  * Il calendario Google riceve solo una COPIA dei lavori (non viene mai riletto: app veloce).
  * Il PIN e le email stanno SOLO nel foglio, non in questo codice.
  * ===================================================================== */
 
-var F_LAVORI = 'Lavori', F_PERSONE = 'Persone', F_SETT = 'Giorni liberi', F_ECC = 'Eccezioni', F_IMP = 'Impostazioni';
+var F_LAVORI = 'Lavori', F_PROG = 'Progetti', F_PERSONE = 'Persone', F_SETT = 'Giorni liberi', F_ECC = 'Eccezioni', F_IMP = 'Impostazioni';
 
 var CAMPI = ['id', 'emoji', 'titolo', 'descrizione', 'data', 'quando', 'ora', 'durata', 'assegnati', 'creatore',
-  'stato', 'risposte', 'eventoId', 'creato', 'aggiornato'];
+  'stato', 'risposte', 'eventoId', 'creato', 'aggiornato', 'progettoId'];
 var INTESTAZIONI = ['ID', 'Emoji', 'Titolo', 'Dettagli', 'Giorno', 'Quando', 'Ora', 'Durata (min)', 'Per chi', 'Creato da',
-  'Stato', 'Risposte (non toccare)', 'ID evento (non toccare)', 'Creato il', 'Aggiornato il'];
+  'Stato', 'Risposte (non toccare)', 'ID evento (non toccare)', 'Creato il', 'Aggiornato il', 'Progetto (non toccare)'];
+var CAMPI_P = ['id', 'emoji', 'titolo', 'descrizione', 'stato', 'creatore', 'totale', 'note', 'articoli', 'allegati', 'cartella', 'creato', 'aggiornato'];
+var INTESTAZIONI_P = ['ID', 'Emoji', 'Lavoro', 'Dettagli', 'Stato', 'Creato da', 'Speso €', 'Note (non toccare)', 'Articoli (non toccare)',
+  'Foto e documenti (non toccare)', 'Cartella Drive (non toccare)', 'Creato il', 'Aggiornato il'];
+var CARTELLA_PROGETTI = 'Lavori di casa - Progetti';
+var SCHEMA = '3';
 var GIORNI = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'];
 var TESTO_FASCIA = { tutto: '☀️ Tutto il giorno', mattina: '🌅 Mattina', pomeriggio: '🌇 Pomeriggio', no: '❌ No' };
 var ICONA_STATO = { attesa: '⏳', ok: '✅', no: '❌', altro: '📅', fatto: '✔️' };
@@ -247,6 +385,7 @@ function onOpen() {
   SpreadsheetApp.getUi().createMenu('📋 Lavori')
     .addItem('Prepara foglio e calendario', 'setup')
     .addItem('Ricrea gli eventi nel calendario', 'riallineaCalendario')
+    .addItem('Prepara i progetti (foto su Drive)', 'preparaProgetti')
     .addToUi();
 }
 
@@ -256,6 +395,9 @@ function setup() {
   var lav = prepara_(ss, F_LAVORI, INTESTAZIONI);
   lav.getRange(1, 1, lav.getMaxRows(), INTESTAZIONI.length).setNumberFormat('@');
   lav.setColumnWidth(3, 220); lav.setColumnWidth(4, 240);
+  preparaProgetti_(ss);
+  cartellaProgetti_();
+  PropertiesService.getScriptProperties().setProperty('SCHEMA', SCHEMA);
 
   var per = prepara_(ss, F_PERSONE, ['Nome', 'Email', 'Colore']);
   if (per.getLastRow() < 2) {
@@ -295,6 +437,27 @@ function setup() {
   try { SpreadsheetApp.getUi().alert(msg); } catch (e) { Logger.log(msg); }
 }
 
+function preparaProgetti_(ss) {
+  var sh = prepara_(ss, F_PROG, INTESTAZIONI_P);
+  sh.getRange(1, 1, sh.getMaxRows(), INTESTAZIONI_P.length).setNumberFormat('@');
+  sh.setColumnWidth(3, 240); sh.setColumnWidth(4, 260);
+  return sh;
+}
+
+/* Aggiornamento automatico del foglio alla prima chiamata dopo la nuova versione (scheda Progetti, colonna Progetto) */
+function schema_(ss) {
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty('SCHEMA') === SCHEMA) return;
+  var lav = ss.getSheetByName(F_LAVORI);
+  if (lav) {
+    lav.getRange(1, 1, 1, INTESTAZIONI.length).setValues([INTESTAZIONI])
+      .setFontWeight('bold').setBackground('#1d2230').setFontColor('#ffffff');
+    lav.getRange(1, CAMPI.length, lav.getMaxRows(), 1).setNumberFormat('@');
+  }
+  if (!ss.getSheetByName(F_PROG)) preparaProgetti_(ss);
+  props.setProperty('SCHEMA', SCHEMA);
+}
+
 function prepara_(ss, nome, intestazioni) {
   var sh = ss.getSheetByName(nome) || ss.insertSheet(nome);
   sh.getRange(1, 1, 1, intestazioni.length).setValues([intestazioni])
@@ -303,8 +466,18 @@ function prepara_(ss, nome, intestazioni) {
   return sh;
 }
 
+/* Dal menu o dall'editor, una volta: crea la scheda Progetti e la cartella su Drive (e chiede il permesso per Drive) */
+function preparaProgetti() {
+  var ss = SpreadsheetApp.getActive();
+  preparaProgetti_(ss);
+  schema_(ss);
+  var c = cartellaProgetti_();
+  var msg = 'Progetti pronti ✅\n\nFoto e documenti finiranno su Drive nella cartella "' + c.getName() + '".';
+  try { SpreadsheetApp.getUi().alert(msg); } catch (e) { Logger.log(msg); }
+}
+
 /* ---------- Server per l'app ---------- */
-function doGet() { return json_({ ok: true, info: 'Lavori di casa v2 attivo ✅' }); }
+function doGet() { return json_({ ok: true, info: 'Lavori di casa v2.1 attivo ✅' }); }
 
 function doPost(e) {
   try {
@@ -313,13 +486,24 @@ function doPost(e) {
     var imp = impostazioni_(ss);
     if (!imp['PIN'] || String(p.pin) !== String(imp['PIN'])) return json_({ ok: false, error: 'PIN sbagliato 🔒' });
 
+    schema_(ss);
     if (p.action === 'list') return json_(pacchetto_(leggiDb_(ss, imp)));
+
+    // foto o documento di un progetto: prima lo carico su Drive (fuori dal blocco: può metterci qualche secondo)
+    var caricato = null;
+    if (p.action === 'allegato_aggiungi' && p.base64) {
+      caricato = caricaFile_(ss, imp, p);
+      p.file = caricato;
+      delete p.base64;
+    }
 
     var lock = LockService.getScriptLock();
     lock.waitLock(15000);
     try {
       var db = leggiDb_(ss, imp);
-      var r = applica(db, p);
+      var r;
+      try { r = applica(db, p); }
+      catch (errAz) { if (caricato) cestina_([caricato.fileId]); throw errAz; }
       var avviso = '';
       if (r.calendario) {
         try { if (r.calendario === 'salva') salvaEvento_(r.lavoro, imp); else eliminaEvento_(r.lavoro, imp); }
@@ -327,6 +511,11 @@ function doPost(e) {
       }
       if (p.action === 'settimana') scriviSettimane_(ss, db);
       else if (p.action === 'eccezione') scriviEccezioni_(ss, db);
+      else if (r.progetto) {
+        scriviProgetti_(ss, db.progetti);
+        if (r.lavoriToccati) scriviLavori_(ss, db.lavori);
+        if (r.cestina && r.cestina.length) cestina_(r.cestina);
+      }
       else scriviLavori_(ss, db.lavori);
       try { inviaEmail_(r, p.chi, db, imp); } catch (errMail) { Logger.log(errMail); }
       var out = pacchetto_(db);
@@ -345,11 +534,14 @@ function pacchetto_(db) {
   var limite = Utilities.formatDate(new Date(Date.now() - 60 * 864e5), Session.getScriptTimeZone(), 'yyyy-MM-dd');
   return {
     ok: true,
-    lavori: db.lavori.filter(function (l) { return !l.fatto || l.data >= limite; }),
+    lavori: db.lavori.filter(function (l) { return !l.fatto || l.data >= limite || (l.progettoId && hasProgetto_(db, l.progettoId)); }),
+    progetti: db.progetti,
     persone: db.persone.map(function (p) { return { nome: p.nome, colore: p.colore }; }),
     settimane: db.settimane, eccezioni: db.eccezioni, admin: db.admin
   };
 }
+
+function hasProgetto_(db, id) { return db.progetti.some(function (p) { return p.id === id; }); }
 
 /* ---------- Lettura del foglio (una lettura per scheda) ---------- */
 function righe_(ss, nome) {
@@ -389,6 +581,12 @@ function leggiDb_(ss, imp) {
     return o;
   }).filter(function (l) { return l.id; }).map(normalizza);
 
+  var progetti = righe_(ss, F_PROG).map(function (r) {
+    var o = {};
+    CAMPI_P.forEach(function (c, i) { o[c] = testo_(r[i], tz); });
+    return o;
+  }).filter(function (p) { return p.id; }).map(normalizzaProgetto);
+
   var settimane = {};
   righe_(ss, F_SETT).forEach(function (r) {
     var n = String(r[0]).trim();
@@ -402,7 +600,7 @@ function leggiDb_(ss, imp) {
     if (n && d >= oggi && v) { eccezioni[n] = eccezioni[n] || {}; eccezioni[n][d] = v; }
   });
 
-  return { lavori: lavori, persone: persone, settimane: settimane, eccezioni: eccezioni, admin: imp['Amministratore'] || '' };
+  return { lavori: lavori, progetti: progetti, persone: persone, settimane: settimane, eccezioni: eccezioni, admin: imp['Amministratore'] || '' };
 }
 
 /* ---------- Scrittura ---------- */
@@ -425,6 +623,19 @@ function scriviLavori_(ss, lavori) {
   if (righe.length) sh.getRange(2, 1, righe.length, CAMPI.length).setNumberFormat('@');
   scriviTutto_(sh, righe, CAMPI.length);
 }
+function scriviProgetti_(ss, progetti) {
+  var sh = ss.getSheetByName(F_PROG) || preparaProgetti_(ss);
+  progetti.sort(function (a, b) { return (a.stato + a.creato).localeCompare(b.stato + b.creato); });
+  var righe = progetti.map(function (p) {
+    return CAMPI_P.map(function (c) {
+      if (c === 'note' || c === 'articoli' || c === 'allegati') return JSON.stringify(p[c] || []);
+      if (c === 'totale') return String(totaleProgetto(p)).replace('.', ',');
+      return p[c] == null ? '' : String(p[c]);
+    });
+  });
+  if (righe.length) sh.getRange(2, 1, righe.length, CAMPI_P.length).setNumberFormat('@');
+  scriviTutto_(sh, righe, CAMPI_P.length);
+}
 function scriviSettimane_(ss, db) {
   var sh = ss.getSheetByName(F_SETT);
   var nomi = db.persone.map(function (p) { return p.nome; });
@@ -441,6 +652,44 @@ function scriviEccezioni_(ss, db) {
   var sh = ss.getSheetByName(F_ECC);
   if (righe.length) sh.getRange(2, 1, righe.length, 3).setNumberFormat('@');
   scriviTutto_(sh, righe, 3);
+}
+
+/* ---------- Foto e documenti dei progetti su Google Drive ---------- */
+function cartellaProgetti_() {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty('CARTELLA_ID'), c = null;
+  if (id) { try { c = DriveApp.getFolderById(id); if (c.isTrashed()) c = null; } catch (e) { c = null; } }
+  if (!c) {
+    var it = DriveApp.getFoldersByName(CARTELLA_PROGETTI);
+    c = it.hasNext() ? it.next() : DriveApp.createFolder(CARTELLA_PROGETTI);
+    props.setProperty('CARTELLA_ID', c.getId());
+  }
+  return c;
+}
+function caricaFile_(ss, imp, p) {
+  var db = leggiDb_(ss, imp);
+  var pr = db.progetti.filter(function (x) { return x.id === p.progettoId; })[0];
+  if (!pr) throw new Error('Progetto non trovato: forse è stato eliminato 🔄');
+  var cartella = null;
+  if (pr.cartella) { try { cartella = DriveApp.getFolderById(pr.cartella); if (cartella.isTrashed()) cartella = null; } catch (e) { cartella = null; } }
+  if (!cartella) cartella = cartellaProgetti_().createFolder((pr.emoji + ' ' + pr.titolo).replace(/[\\/:*?"<>|]/g, '-').slice(0, 80));
+  var tipo = p.tipo === 'foto' ? 'foto' : 'doc';
+  var mime = String(p.mime || (tipo === 'foto' ? 'image/jpeg' : 'application/octet-stream'));
+  var nome = String(p.nome || (tipo === 'foto' ? 'Foto' : 'Documento')).replace(/[\\/:*?"<>|]/g, '-').slice(0, 100);
+  var quando = Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'yyyy-MM-dd HH.mm');
+  var blob = Utilities.newBlob(Utilities.base64Decode(p.base64), mime, quando + ' ' + nome);
+  var file = cartella.createFile(blob);
+  // visibile a chi ha il link (serve per vedere le foto nell'app); nessuno lo trova senza link
+  try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) { Logger.log(e); }
+  var id = file.getId();
+  return {
+    tipo: tipo, nome: nome, mime: mime, fileId: id, cartella: cartella.getId(),
+    url: file.getUrl(),
+    anteprima: (tipo === 'foto' || /^image\//.test(mime) || mime === 'application/pdf') ? 'https://drive.google.com/thumbnail?id=' + id + '&sz=w800' : ''
+  };
+}
+function cestina_(ids) {
+  (ids || []).forEach(function (id) { try { if (id) DriveApp.getFileById(id).setTrashed(true); } catch (e) { Logger.log(e); } });
 }
 
 /* ---------- Copia nel calendario Google ---------- */
