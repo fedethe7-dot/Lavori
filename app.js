@@ -835,6 +835,20 @@ function leggiInvito() {
   history.replaceState(null, '', location.pathname);
   return true;
 }
+/* ---------- Proposte dalle altre app (ecosistema) ----------
+   Le altre app possono aprire Lavori con un lavoro già compilato:
+   .../Lavori/#nuovo?emoji=🐶&titolo=Vaccino%20Jenny&data=2026-11-03&dettagli=...  */
+function leggiProposta() {
+  const m = location.hash.match(/^#nuovo\?(.*)$/);
+  if (!m) return null;
+  history.replaceState(null, '', location.pathname);
+  const q = new URLSearchParams(m[1]);
+  const titolo = (q.get('titolo') || '').slice(0, 80);
+  if (!titolo) return null;
+  let data = q.get('data') || '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data) || data < oggi()) data = oggi();   // niente lavori nel passato
+  return { emoji: q.get('emoji') || '📋', titolo, descrizione: (q.get('dettagli') || '').slice(0, 500), data, id: '' };
+}
 function tema() {
   if (cfg.tema === 'auto') document.documentElement.removeAttribute('data-theme');
   else document.documentElement.dataset.theme = cfg.tema;
@@ -907,9 +921,11 @@ document.addEventListener('visibilitychange', () => {
 (async function avvio() {
   tema();
   const invito = leggiInvito();
+  const proposta = leggiProposta();
   const c = cfg.url && S.get('cache', null);
   if (c) usa(c, true); else render();
   await carica(!!cfg.url && !invito);
   if (!cfg.me || !st.persone.some(p => p.nome === cfg.me)) apriImpostazioni(invito ? 'Benvenuto! 👋 Scegli chi sei.' : 'Per iniziare dimmi chi sei 🙋');
+  else if (proposta) { formLavoro(null, proposta.data, proposta); toast('Arrivato da un\'altra app 👍'); }
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 })();
