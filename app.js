@@ -778,7 +778,7 @@ function apriImpostazioni(msg) {
       <div class="seg">${[['auto', '📱 Come il telefono'], ['light', '☀️ Chiaro'], ['dark', '🌙 Scuro']].map(([k, t]) => `<button type="button" class="${cfg.tema === k ? 'on' : ''}" data-tema="${k}">${t}</button>`).join('')}</div>
       <div class="box"><div class="box-t">🔗 Collegamento al foglio Google</div>
         <label>Link dello script<input name="url" inputmode="url" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(cfg.url)}"></label>
-        <label>PIN di famiglia<input name="pin" type="password" inputmode="numeric" value="${esc(cfg.pin)}"></label>
+        <label>Chiave di famiglia<input name="pin" type="password" autocapitalize="off" autocorrect="off" spellcheck="false" value="${esc(cfg.pin)}"></label>
         <div class="err" id="err"></div></div>
       <button class="btn main big" type="submit">💾 Salva</button>
       ${cfg.url ? '<button class="btn" type="button" id="btnInvito">📲 Copia il link per la famiglia</button>' : ''}
