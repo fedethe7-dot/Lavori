@@ -9,6 +9,7 @@ App semplice per dividere i lavori di casa in famiglia.
 - ✔️ Alla fine si segna **fatto**.
 - 💡 **Progetti**: la lista comune dei lavori da fare per la casa, **senza data**. Ognuno può aggiungere note, foto, scontrini/PDF e le spese (cosa, quanti, prezzo, dove) con il totale. Quando si decide, **📅 Programma**: si sceglie solo il giorno e chi partecipa, il resto è già compilato. Anche dal ＋ normale si può scegliere un progetto dalla tendina.
 - 🧰 **Attrezzi**: la nota veloce di attrezzi, utensili e cose che servono, di tutta la famiglia. Scrivi nella casella e premi invio (o ＋): più cose insieme separate da virgola, es. *viti, trapano, nastro*. Tocca una cosa per segnarla presa, **Svuota** toglie quelle prese. Si vede subito, anche prima che il foglio risponda.
+- 💸 **Spese in Gestione Casa** (dal 2027): ogni articolo con un prezzo aggiunto a un progetto arriva da solo in Gestione Casa, categoria 💡 Progetti casa, voce "Materiale per lavori".
 - 🔔 **Promemoria** nel calendario Google "Lavori di casa": il giorno prima alle 8 e 2 ore prima, sempre tra le 8 e le 22.
 - 📧 Email solo per lavori nuovi, spostati, eliminati e per le risposte (si possono spegnere).
 - 🎨 Chiara o scura: segue il telefono, oppure la scegli dalle impostazioni.

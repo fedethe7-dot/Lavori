@@ -186,7 +186,7 @@ function usa(d, daCache) {
   st.settimane = d.settimane || {};
   st.eccezioni = d.eccezioni || {};
   st.admin = d.admin || '';
-  if (!daCache) { st.caricato = Date.now(); if (cfg.url) S.set('cache', d); }
+  if (!daCache) { st.caricato = Date.now(); if (cfg.url) { S.set('cache', d); SpeseCasa.programma(); } }
   render();
   badge();
   if (d.avviso) toast(d.avviso, true);
