@@ -1,5 +1,5 @@
 // Ad ogni aggiornamento dell'app aumenta il numero qui sotto
-const CACHE = 'lavori-v9';
+const CACHE = 'lavori-v10';
 const FILES = ['./', 'index.html', 'style.css', 'logica.js', 'gestionecasa.js', 'app.js', 'manifest.json', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {

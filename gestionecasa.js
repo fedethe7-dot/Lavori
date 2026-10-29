@@ -2,7 +2,7 @@
 /* =========================================================
    Lavori di casa — spese dei Progetti in Gestione Casa
    Dal 2027 ogni articolo con un prezzo aggiunto a un progetto
-   diventa una spesa in Gestione Casa, categoria 💡 Progetti casa
+   diventa una spesa in Gestione Casa, categoria 🔨 Progetti casa
    (creata da sola se manca), voce generica "Materiale per lavori"
    (prezzo × quantità, data in cui è stato aggiunto).
    Paga chi paga di solito nella casa (si cambia poi in Gestione Casa).
@@ -13,7 +13,7 @@
 const SpeseCasa = {
   URL: 'https://script.google.com/macros/s/AKfycbx_UKlBm4SKEYtPWrUO9bh1MuMBBKSzJbpgFQj1j9pbW5oFF3bkJL5DevaKj1rF537-wA/exec',
   DAL: '2027-01-01',
-  CAT: { id: 'progetti', name: 'Progetti casa', emoji: '💡', base: true },
+  CAT: { id: 'progetti', name: 'Progetti casa', emoji: '🔨', base: true },
   VOCE: 'Materiale per lavori',
   PREF: 'elav_',                       // id delle spese create da qui: elav_<id articolo>
   K_SESS: 'lavori2.gcSess', K_USATO: 'lavori2.gcUsato', K_FIRMA: 'lavori2.gcFirma',
