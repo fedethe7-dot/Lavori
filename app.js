@@ -1,7 +1,7 @@
 'use strict';
 /* Lavori di casa v2 — interfaccia */
 
-const VERSIONE = '2.1';
+const VERSIONE = '2.2';
 const EMOJI_P = ['🎨', '🔨', '🪚', '🌳', '🪴', '💡', '🚿', '🛋️', '🧱', '🔌', '🪟', '🚪', '🏡', '🧰', '🧹', '📦'];
 const EMOJI = ['🧹', '🌿', '🛒', '🔧', '💡', '🧺', '🍽️', '🚗', '🐶', '🗑️', '📦', '🧽', '🪴', '🛠️', '🧯', '📋'];
 const STATO = {
@@ -36,7 +36,7 @@ const S = {
   set(k, v) { try { localStorage.setItem('lavori2.' + k, JSON.stringify(v)); } catch (e) { /* niente */ } }
 };
 const cfg = { url: S.get('url', ''), pin: S.get('pin', ''), me: S.get('me', ''), tema: S.get('tema', 'auto') };
-const st = { lavori: [], progetti: [], pstato: 'aperto', persone: [], settimane: {}, eccezioni: {}, admin: '', view: ({ cal: 'liberi', list: 'home' })[S.get('view', 'home')] || S.get('view', 'home'),
+const st = { lavori: [], progetti: [], spesa: [], coda: [], pstato: 'aperto', persone: [], settimane: {}, eccezioni: {}, admin: '', view: ({ cal: 'liberi', list: 'home' })[S.get('view', 'home')] || S.get('view', 'home'),
   mese: null, giorno: null, soloMiei: false, chiLiberi: '', occupato: 0, caricato: 0 };
 
 /* ---------- Utilità ---------- */
@@ -92,12 +92,13 @@ const Prova = {
   },
   pacchetto(db) {
     const nomi = S.get('provaNomi', PROVA_NOMI);
-    return { ok: true, lavori: db.lavori, progetti: db.progetti || [], settimane: db.settimane, eccezioni: db.eccezioni, admin: db.admin,
+    return { ok: true, lavori: db.lavori, progetti: db.progetti || [], spesa: db.spesa || [], settimane: db.settimane, eccezioni: db.eccezioni, admin: db.admin,
       persone: nomi.map((n, i) => ({ nome: n, colore: COLORI[i % COLORI.length] })) };
   },
   async chiama(p) {
     const db = this.db();
     db.progetti = db.progetti || [];
+    db.spesa = db.spesa || [];
     if (p.action === 'allegato_aggiungi' && p.base64) {        // in prova il file resta sul telefono
       const url = `data:${p.mime};base64,${p.base64}`;
       if (url.length > 1500000) throw new Error('In modalità prova i file devono essere piccoli: collega il foglio 🔗');
@@ -128,7 +129,7 @@ const backend = () => (cfg.url ? Foglio : Prova);
 
 function datiDiProva() {
   const t = oggi();
-  const db = { lavori: [], progetti: [], settimane: {
+  const db = { lavori: [], progetti: [], spesa: [], settimane: {
     Federico: ['pomeriggio', 'pomeriggio', 'no', 'pomeriggio', 'pomeriggio', 'tutto', 'tutto'],
     Mamma: ['mattina', 'tutto', 'mattina', 'tutto', 'mattina', 'mattina', 'no'],
     Sorella: ['no', 'no', 'pomeriggio', 'no', 'pomeriggio', 'tutto', 'tutto']
@@ -145,6 +146,7 @@ function datiDiProva() {
   fai('Federico', { action: 'nota_aggiungi', progettoId: pit.id, testo: 'Prima stuccare le crepe vicino alla finestra' });
   fai('Mamma', { action: 'articolo_aggiungi', progettoId: pit.id, nome: 'Pittura lavabile 10 L', qta: 2, prezzo: '34,90', negozio: 'Brico' });
   fai('Federico', { action: 'articolo_aggiungi', progettoId: pit.id, nome: 'Rullo e vaschetta', qta: 1, prezzo: '9,50' });
+  fai('Mamma', { action: 'spesa_aggiungi', nomi: 'Viti da legno, Nastro americano, Punte trapano 6 mm' });
   fai('Federico', { action: 'progetto_crea', emoji: '🪴', titolo: 'Aiuola davanti casa', descrizione: 'Togliere le erbacce e mettere i sassi bianchi' });
   return db;
 }
@@ -179,6 +181,7 @@ function azione(p, ok) {
 function usa(d, daCache) {
   st.lavori = (d.lavori || []).map(normalizza);
   st.progetti = (d.progetti || []).map(normalizzaProgetto);
+  st.spesa = d.spesa || [];
   st.persone = d.persone || [];
   st.settimane = d.settimane || {};
   st.eccezioni = d.eccezioni || {};
@@ -204,11 +207,15 @@ function render() {
   $('#avvisi').innerHTML = avv;
 
   document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('active', x.dataset.view === st.view));
-  $('#fab').classList.toggle('hidden', st.view === 'fatti');
+  $('#fab').classList.toggle('hidden', st.view === 'fatti' || st.view === 'spesa');
+  const nSpesa = spesaVista().filter(x => !x.preso).length;
+  const cnt = $('#spesaCnt');
+  cnt.textContent = nSpesa; cnt.classList.toggle('hidden', !nSpesa);
   $('#fab').setAttribute('aria-label', st.view === 'progetti' ? 'Nuovo progetto' : 'Nuovo lavoro');
   if (st.view === 'liberi') renderLiberi();
   else if (st.view === 'fatti') renderFatti();
   else if (st.view === 'progetti') renderProgetti();
+  else if (st.view === 'spesa') renderSpesa();
   else renderHome();
 }
 
@@ -613,6 +620,69 @@ function renderProgetti() {
   $('#main').innerHTML = h;
 }
 
+/* ---------- 🧰 Attrezzi (nota veloce di attrezzi, utensili e cose che servono): la casella è sempre pronta, le modifiche si vedono subito e partono in sottofondo ---------- */
+// Le operazioni ancora in viaggio verso il foglio (st.coda) si vedono già sopra i dati del foglio.
+function spesaVista() {
+  let L = st.spesa.map(x => Object.assign({}, x));
+  st.coda.forEach(op => {
+    if (op.t === 'agg') op.nomi.forEach(n => {
+      const g = L.find(x => String(x.nome).toLowerCase() === n.toLowerCase());
+      if (g) g.preso = false; else L.push({ id: 'tmp-' + n, nome: n, chi: cfg.me, preso: false, tmp: true });
+    });
+    else if (op.t === 'preso') { const x = L.find(y => y.id === op.id); if (x) x.preso = op.preso; }
+    else if (op.t === 'del') L = L.filter(x => x.id !== op.id);
+    else if (op.t === 'svuota') L = L.filter(x => !x.preso);
+  });
+  return L;
+}
+function spesaOp(p, op) {
+  st.coda.push(op);
+  render();
+  return inFila(async () => {
+    occupato(1);
+    try {
+      const d = await backend().chiama(Object.assign({}, p, { chi: cfg.me }));
+      st.coda = st.coda.filter(x => x !== op);
+      usa(d);
+    } catch (e) {
+      st.coda = st.coda.filter(x => x !== op);
+      render();
+      toast(e.message, true);
+    } finally { occupato(-1); }
+  });
+}
+function spesaAggiungi(testo) {
+  const nomi = _voci(testo);
+  if (!nomi.length) return;
+  if (!cfg.me) return apriImpostazioni('Per iniziare dimmi chi sei 🙋');
+  spesaOp({ action: 'spesa_aggiungi', nomi }, { t: 'agg', nomi });
+}
+function spesaToggle(id) {
+  const x = spesaVista().find(y => y.id === id);
+  if (!x || x.tmp) return;
+  spesaOp({ action: 'spesa_preso', id, preso: !x.preso }, { t: 'preso', id, preso: !x.preso });
+}
+function rigaSpesa(x) {
+  return `<div class="sp ${x.preso ? 'done' : ''} ${x.tmp ? 'pending' : ''}">
+    <button class="sp-main" data-sp="${esc(x.id)}"><span class="sp-box">${x.preso ? '✓' : ''}</span><span class="sp-t">${esc(x.nome)}</span></button>
+    ${x.tmp ? '' : `<button class="sp-x" data-spdel="${esc(x.id)}" aria-label="Togli ${esc(x.nome)}">×</button>`}</div>`;
+}
+function renderSpesa() {
+  if (!$('#spesaForm')) {            // la casella si crea una volta sola, così la tastiera resta aperta tra un inserimento e l'altro
+    $('#main').innerHTML = `<form class="sp-add" id="spesaForm" autocomplete="off">
+      <input id="spesaIn" type="text" enterkeyhint="send" autocapitalize="sentences" autocorrect="on" placeholder="Cosa serve? viti, trapano…" aria-label="Aggiungi alla lista">
+      <button type="submit" class="sp-go" aria-label="Aggiungi">＋</button></form><div id="spesaLista"></div>`;
+  }
+  const L = spesaVista();
+  const da = L.filter(x => !x.preso), presi = L.filter(x => x.preso);
+  let h = da.length ? `<div class="box"><div class="box-t">🧰 Da prendere <span class="muted small">(${da.length})</span></div>${da.map(rigaSpesa).join('')}</div>`
+    : `<div class="empty big">${presi.length ? 'Hai preso tutto 🎉' : 'La lista è vuota 🧰<br><span class="muted">Scrivi qui sopra cosa serve</span>'}</div>`;
+  if (presi.length) h += `<div class="box"><div class="box-t">✔️ Presi <span class="muted small">(${presi.length})</span>
+    <button class="chip-btn sp-clear" data-spsvuota>Svuota</button></div>
+    <div class="muted small" style="margin:-4px 0 6px">Tocca per rimetterli da prendere</div>${presi.map(rigaSpesa).join('')}</div>`;
+  $('#spesaLista').innerHTML = h;
+}
+
 function formProgetto(p) {
   const nuovo = !p;
   const v = p || { emoji: '🎨', titolo: '', descrizione: '' };
@@ -878,6 +948,9 @@ document.addEventListener('click', e => {
   if (q('[data-go]')) return apriImpostazioni();
   if ((x = q('[data-vai]'))) { st.view = x.dataset.vai; S.set('view', st.view); return render(); }
   if ((x = q('.job[data-id]'))) return apriDettaglio(x.dataset.id);
+  if ((x = q('[data-spdel]'))) return spesaOp({ action: 'spesa_elimina', id: x.dataset.spdel }, { t: 'del', id: x.dataset.spdel });
+  if (q('[data-spsvuota]')) return spesaOp({ action: 'spesa_svuota' }, { t: 'svuota' });
+  if ((x = q('[data-sp]'))) return spesaToggle(x.dataset.sp);
   if ((x = q('.prj[data-prj]'))) return apriProgetto(x.dataset.prj);
   if ((x = q('[data-pstato]'))) { st.pstato = x.dataset.pstato; return render(); }
   if ((x = q('#tabs button'))) { st.view = x.dataset.view; S.set('view', st.view); window.scrollTo(0, 0); return render(); }
@@ -909,6 +982,14 @@ document.addEventListener('touchend', e => {
   if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) cambiaMese(dx < 0 ? 1 : -1);
 }, { passive: true });
 
+document.addEventListener('submit', e => {
+  if (e.target.id !== 'spesaForm') return;
+  e.preventDefault();
+  const inp = $('#spesaIn'), testo = inp.value;
+  inp.value = '';                    // si svuota subito e il cursore resta lì: si può scrivere la cosa dopo
+  inp.focus();
+  spesaAggiungi(testo);
+});
 $('#fab').onclick = () => (st.view === 'progetti' ? formProgetto() : formLavoro(null, st.view === 'liberi' ? st.giorno : oggi()));
 $('#btnSync').onclick = () => carica();
 $('#btnMe').onclick = () => apriImpostazioni();

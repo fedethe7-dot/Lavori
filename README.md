@@ -1,4 +1,4 @@
-# 🏠 Lavori di casa · v2.1
+# 🏠 Lavori di casa · v2.2
 
 App semplice per dividere i lavori di casa in famiglia.
 
@@ -8,6 +8,7 @@ App semplice per dividere i lavori di casa in famiglia.
 - ✅ ❌ 📅 **Risposte**: ognuno dice *Ci sto*, *Non posso* o propone *Un altro giorno*. Chi ha creato il lavoro lo sposta con un tocco.
 - ✔️ Alla fine si segna **fatto**.
 - 💡 **Progetti**: la lista comune dei lavori da fare per la casa, **senza data**. Ognuno può aggiungere note, foto, scontrini/PDF e le spese (cosa, quanti, prezzo, dove) con il totale. Quando si decide, **📅 Programma**: si sceglie solo il giorno e chi partecipa, il resto è già compilato. Anche dal ＋ normale si può scegliere un progetto dalla tendina.
+- 🧰 **Attrezzi**: la nota veloce di attrezzi, utensili e cose che servono, di tutta la famiglia. Scrivi nella casella e premi invio (o ＋): più cose insieme separate da virgola, es. *viti, trapano, nastro*. Tocca una cosa per segnarla presa, **Svuota** toglie quelle prese. Si vede subito, anche prima che il foglio risponda.
 - 🔔 **Promemoria** nel calendario Google "Lavori di casa": il giorno prima alle 8 e 2 ore prima, sempre tra le 8 e le 22.
 - 📧 Email solo per lavori nuovi, spostati, eliminati e per le risposte (si possono spegnere).
 - 🎨 Chiara o scura: segue il telefono, oppure la scegli dalle impostazioni.
@@ -41,6 +42,13 @@ I dati stanno solo nel foglio Google, protetto dal PIN di famiglia: in questo re
 3. **Esegui il deployment → Gestisci deployment → Modifica → Nuova versione** (il link resta uguale).
 
 Le foto e i documenti stanno su Drive, visibili solo a chi ha il link del file (serve per vederli nell'app).
+
+## 🧰 Aggiornare a v2.2 (Attrezzi) un foglio già in uso
+
+1. **Estensioni → Apps Script**: sostituisci tutto con il nuovo `apps-script/Codice.gs` e salva.
+2. **Esegui il deployment → Gestisci deployment → Modifica → Nuova versione** (il link resta uguale).
+
+La scheda **Attrezzi** del foglio si crea da sola alla prima volta che l'app parla col foglio.
 
 ## 🔔 Promemoria per mamma e sorella
 

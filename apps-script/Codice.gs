@@ -1,4 +1,4 @@
-/* Lavori di casa — Codice.gs v2.1 (regole + server). Incolla TUTTO questo nell'editor Apps Script. */
+/* Lavori di casa — Codice.gs v2.2 (regole + server). Incolla TUTTO questo nell'editor Apps Script. */
 
 /*
  * Lavori di casa v2 — le regole.
@@ -179,6 +179,58 @@ function applicaProgetto(db, p, adesso, chi, capo) {
   return { progetto: pr, eliminato: false, cestina: cestina };
 }
 
+/* ---------- Lista della spesa ---------- */
+/* "latte, pane x2" o una lista → nomi puliti e senza doppioni (la virgola prima di una cifra, come in 1,5 kg, non divide) */
+function _voci(v) {
+  var a = Array.isArray(v) ? v : String(v == null ? '' : v).split(/[\n;]+|,(?!\d)/);
+  var out = [];
+  a.forEach(function (x) {
+    x = _t(x).replace(/\s+/g, ' ').slice(0, 80);
+    if (x && out.map(function (o) { return o.toLowerCase(); }).indexOf(x.toLowerCase()) < 0) out.push(x);
+  });
+  return out;
+}
+
+/**
+ * Azioni sulla spesa: la lista è di tutta la famiglia e tutti possono fare tutto (aggiungere, spuntare, togliere).
+ * Se una cosa è già in lista non si duplica: se era già presa torna da comprare.
+ */
+function applicaSpesa(db, p, adesso, chi) {
+  db.spesa = db.spesa || [];
+  function trova() {
+    for (var i = 0; i < db.spesa.length; i++) if (db.spesa[i].id === p.id) return db.spesa[i];
+    return null;
+  }
+  switch (p.action) {
+    case 'spesa_aggiungi': {
+      var nomi = _voci(p.nomi);
+      if (!nomi.length) throw new Error('Scrivi cosa serve 🧰');
+      nomi.forEach(function (n) {
+        var gia = db.spesa.filter(function (x) { return String(x.nome).toLowerCase() === n.toLowerCase(); })[0];
+        if (gia) { gia.preso = false; gia.presoDa = ''; return; }
+        db.spesa.push({ id: nuovoId(), nome: n, chi: chi, creato: adesso, preso: false, presoDa: '' });
+      });
+      break;
+    }
+    case 'spesa_preso': {
+      var x = trova();
+      if (x) { x.preso = !!p.preso; x.presoDa = x.preso ? chi : ''; }      // se non c'è più, qualcuno l'ha già tolto: va bene così
+      break;
+    }
+    case 'spesa_elimina': {
+      var y = trova();
+      if (y) db.spesa.splice(db.spesa.indexOf(y), 1);
+      break;
+    }
+    case 'spesa_svuota':
+      db.spesa = db.spesa.filter(function (z) { return !z.preso; });
+      break;
+    default:
+      throw new Error('Azione sconosciuta');
+  }
+  return { spesa: true };
+}
+
 /* ---------- Giorni liberi ---------- */
 function giornoSett(data) {                    // 0 = lunedì … 6 = domenica
   var p = String(data).split('-').map(Number);
@@ -222,6 +274,12 @@ function applica(db, p, adesso) {
     var rp = applicaProgetto(db, p, adesso, chi, capo);
     rp.lavoro = null; rp.notifiche = []; rp.calendario = null;
     return rp;
+  }
+
+  if (/^spesa_/.test(p.action || '')) {
+    var rs = applicaSpesa(db, p, adesso, chi);
+    rs.lavoro = null; rs.notifiche = []; rs.calendario = null;
+    return rs;
   }
 
   function avvisa(a, tipo) { if (a && a !== chi) notifiche.push({ a: a, tipo: tipo }); }
@@ -358,13 +416,13 @@ function applica(db, p, adesso) {
 
 /* =====================================================================
  * Lavori di casa v2 — server sul foglio Google
- * Schede: Lavori, Progetti, Persone, Giorni liberi, Eccezioni, Impostazioni
+ * Schede: Lavori, Progetti, Attrezzi, Persone, Giorni liberi, Eccezioni, Impostazioni
  * Foto e documenti dei progetti: su Google Drive, cartella "Lavori di casa - Progetti" (una sottocartella per progetto).
  * Il calendario Google riceve solo una COPIA dei lavori (non viene mai riletto: app veloce).
  * Il PIN e le email stanno SOLO nel foglio, non in questo codice.
  * ===================================================================== */
 
-var F_LAVORI = 'Lavori', F_PROG = 'Progetti', F_PERSONE = 'Persone', F_SETT = 'Giorni liberi', F_ECC = 'Eccezioni', F_IMP = 'Impostazioni';
+var F_LAVORI = 'Lavori', F_PROG = 'Progetti', F_SPESA = 'Attrezzi', F_PERSONE = 'Persone', F_SETT = 'Giorni liberi', F_ECC = 'Eccezioni', F_IMP = 'Impostazioni';
 
 var CAMPI = ['id', 'emoji', 'titolo', 'descrizione', 'data', 'quando', 'ora', 'durata', 'assegnati', 'creatore',
   'stato', 'risposte', 'eventoId', 'creato', 'aggiornato', 'progettoId'];
@@ -373,8 +431,10 @@ var INTESTAZIONI = ['ID', 'Emoji', 'Titolo', 'Dettagli', 'Giorno', 'Quando', 'Or
 var CAMPI_P = ['id', 'emoji', 'titolo', 'descrizione', 'stato', 'creatore', 'totale', 'note', 'articoli', 'allegati', 'cartella', 'creato', 'aggiornato'];
 var INTESTAZIONI_P = ['ID', 'Emoji', 'Lavoro', 'Dettagli', 'Stato', 'Creato da', 'Speso €', 'Note (non toccare)', 'Articoli (non toccare)',
   'Foto e documenti (non toccare)', 'Cartella Drive (non toccare)', 'Creato il', 'Aggiornato il'];
+var CAMPI_S = ['id', 'nome', 'chi', 'creato', 'preso', 'presoDa'];
+var INTESTAZIONI_S = ['ID', 'Cosa', 'Aggiunto da', 'Aggiunto il', 'Preso', 'Preso da'];
 var CARTELLA_PROGETTI = 'Lavori di casa - Progetti';
-var SCHEMA = '3';
+var SCHEMA = '4';
 var GIORNI = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'];
 var TESTO_FASCIA = { tutto: '☀️ Tutto il giorno', mattina: '🌅 Mattina', pomeriggio: '🌇 Pomeriggio', no: '❌ No' };
 var ICONA_STATO = { attesa: '⏳', ok: '✅', no: '❌', altro: '📅', fatto: '✔️' };
@@ -396,6 +456,7 @@ function setup() {
   lav.getRange(1, 1, lav.getMaxRows(), INTESTAZIONI.length).setNumberFormat('@');
   lav.setColumnWidth(3, 220); lav.setColumnWidth(4, 240);
   preparaProgetti_(ss);
+  preparaSpesa_(ss);
   cartellaProgetti_();
   PropertiesService.getScriptProperties().setProperty('SCHEMA', SCHEMA);
 
@@ -444,7 +505,14 @@ function preparaProgetti_(ss) {
   return sh;
 }
 
-/* Aggiornamento automatico del foglio alla prima chiamata dopo la nuova versione (scheda Progetti, colonna Progetto) */
+function preparaSpesa_(ss) {
+  var sh = prepara_(ss, F_SPESA, INTESTAZIONI_S);
+  sh.getRange(1, 1, sh.getMaxRows(), INTESTAZIONI_S.length).setNumberFormat('@');
+  sh.setColumnWidth(2, 240);
+  return sh;
+}
+
+/* Aggiornamento automatico del foglio alla prima chiamata dopo la nuova versione (schede Progetti e Attrezzi, colonna Progetto) */
 function schema_(ss) {
   var props = PropertiesService.getScriptProperties();
   if (props.getProperty('SCHEMA') === SCHEMA) return;
@@ -455,6 +523,7 @@ function schema_(ss) {
     lav.getRange(1, CAMPI.length, lav.getMaxRows(), 1).setNumberFormat('@');
   }
   if (!ss.getSheetByName(F_PROG)) preparaProgetti_(ss);
+  if (!ss.getSheetByName(F_SPESA)) preparaSpesa_(ss);
   props.setProperty('SCHEMA', SCHEMA);
 }
 
@@ -477,7 +546,7 @@ function preparaProgetti() {
 }
 
 /* ---------- Server per l'app ---------- */
-function doGet() { return json_({ ok: true, info: 'Lavori di casa v2.1 attivo ✅' }); }
+function doGet() { return json_({ ok: true, info: 'Lavori di casa v2.2 attivo ✅' }); }
 
 function doPost(e) {
   try {
@@ -511,6 +580,7 @@ function doPost(e) {
       }
       if (p.action === 'settimana') scriviSettimane_(ss, db);
       else if (p.action === 'eccezione') scriviEccezioni_(ss, db);
+      else if (r.spesa) scriviSpesa_(ss, db.spesa);
       else if (r.progetto) {
         scriviProgetti_(ss, db.progetti);
         if (r.lavoriToccati) scriviLavori_(ss, db.lavori);
@@ -536,6 +606,7 @@ function pacchetto_(db) {
     ok: true,
     lavori: db.lavori.filter(function (l) { return !l.fatto || l.data >= limite || (l.progettoId && hasProgetto_(db, l.progettoId)); }),
     progetti: db.progetti,
+    spesa: db.spesa,
     persone: db.persone.map(function (p) { return { nome: p.nome, colore: p.colore }; }),
     settimane: db.settimane, eccezioni: db.eccezioni, admin: db.admin
   };
@@ -587,6 +658,13 @@ function leggiDb_(ss, imp) {
     return o;
   }).filter(function (p) { return p.id; }).map(normalizzaProgetto);
 
+  var spesa = righe_(ss, F_SPESA).map(function (r) {
+    var o = {};
+    CAMPI_S.forEach(function (c, i) { o[c] = testo_(r[i], tz); });
+    o.preso = /^s/i.test(o.preso);
+    return o;
+  }).filter(function (x) { return x.id && x.nome; });
+
   var settimane = {};
   righe_(ss, F_SETT).forEach(function (r) {
     var n = String(r[0]).trim();
@@ -600,7 +678,7 @@ function leggiDb_(ss, imp) {
     if (n && d >= oggi && v) { eccezioni[n] = eccezioni[n] || {}; eccezioni[n][d] = v; }
   });
 
-  return { lavori: lavori, progetti: progetti, persone: persone, settimane: settimane, eccezioni: eccezioni, admin: imp['Amministratore'] || '' };
+  return { lavori: lavori, progetti: progetti, spesa: spesa, persone: persone, settimane: settimane, eccezioni: eccezioni, admin: imp['Amministratore'] || '' };
 }
 
 /* ---------- Scrittura ---------- */
@@ -635,6 +713,13 @@ function scriviProgetti_(ss, progetti) {
   });
   if (righe.length) sh.getRange(2, 1, righe.length, CAMPI_P.length).setNumberFormat('@');
   scriviTutto_(sh, righe, CAMPI_P.length);
+}
+function scriviSpesa_(ss, spesa) {
+  var sh = ss.getSheetByName(F_SPESA) || preparaSpesa_(ss);
+  var righe = spesa.map(function (x) {
+    return [x.id, x.nome, x.chi || '', x.creato || '', x.preso ? 'SÌ' : '', x.presoDa || ''];
+  });
+  scriviTutto_(sh, righe, CAMPI_S.length);
 }
 function scriviSettimane_(ss, db) {
   var sh = ss.getSheetByName(F_SETT);

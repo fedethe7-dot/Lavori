@@ -177,6 +177,58 @@ function applicaProgetto(db, p, adesso, chi, capo) {
   return { progetto: pr, eliminato: false, cestina: cestina };
 }
 
+/* ---------- Lista della spesa ---------- */
+/* "latte, pane x2" o una lista → nomi puliti e senza doppioni (la virgola prima di una cifra, come in 1,5 kg, non divide) */
+function _voci(v) {
+  var a = Array.isArray(v) ? v : String(v == null ? '' : v).split(/[\n;]+|,(?!\d)/);
+  var out = [];
+  a.forEach(function (x) {
+    x = _t(x).replace(/\s+/g, ' ').slice(0, 80);
+    if (x && out.map(function (o) { return o.toLowerCase(); }).indexOf(x.toLowerCase()) < 0) out.push(x);
+  });
+  return out;
+}
+
+/**
+ * Azioni sulla spesa: la lista è di tutta la famiglia e tutti possono fare tutto (aggiungere, spuntare, togliere).
+ * Se una cosa è già in lista non si duplica: se era già presa torna da comprare.
+ */
+function applicaSpesa(db, p, adesso, chi) {
+  db.spesa = db.spesa || [];
+  function trova() {
+    for (var i = 0; i < db.spesa.length; i++) if (db.spesa[i].id === p.id) return db.spesa[i];
+    return null;
+  }
+  switch (p.action) {
+    case 'spesa_aggiungi': {
+      var nomi = _voci(p.nomi);
+      if (!nomi.length) throw new Error('Scrivi cosa serve 🧰');
+      nomi.forEach(function (n) {
+        var gia = db.spesa.filter(function (x) { return String(x.nome).toLowerCase() === n.toLowerCase(); })[0];
+        if (gia) { gia.preso = false; gia.presoDa = ''; return; }
+        db.spesa.push({ id: nuovoId(), nome: n, chi: chi, creato: adesso, preso: false, presoDa: '' });
+      });
+      break;
+    }
+    case 'spesa_preso': {
+      var x = trova();
+      if (x) { x.preso = !!p.preso; x.presoDa = x.preso ? chi : ''; }      // se non c'è più, qualcuno l'ha già tolto: va bene così
+      break;
+    }
+    case 'spesa_elimina': {
+      var y = trova();
+      if (y) db.spesa.splice(db.spesa.indexOf(y), 1);
+      break;
+    }
+    case 'spesa_svuota':
+      db.spesa = db.spesa.filter(function (z) { return !z.preso; });
+      break;
+    default:
+      throw new Error('Azione sconosciuta');
+  }
+  return { spesa: true };
+}
+
 /* ---------- Giorni liberi ---------- */
 function giornoSett(data) {                    // 0 = lunedì … 6 = domenica
   var p = String(data).split('-').map(Number);
@@ -220,6 +272,12 @@ function applica(db, p, adesso) {
     var rp = applicaProgetto(db, p, adesso, chi, capo);
     rp.lavoro = null; rp.notifiche = []; rp.calendario = null;
     return rp;
+  }
+
+  if (/^spesa_/.test(p.action || '')) {
+    var rs = applicaSpesa(db, p, adesso, chi);
+    rs.lavoro = null; rs.notifiche = []; rs.calendario = null;
+    return rs;
   }
 
   function avvisa(a, tipo) { if (a && a !== chi) notifiche.push({ a: a, tipo: tipo }); }
@@ -356,5 +414,6 @@ function applica(db, p, adesso) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { applica: applica, normalizza: normalizza, statoLavoro: statoLavoro, libero: libero,
     liberaPer: liberaPer, fasciaLavoro: fasciaLavoro, giornoSett: giornoSett, FASCE: FASCE, ORE_FASCIA: ORE_FASCIA,
-    normalizzaProgetto: normalizzaProgetto, applicaProgetto: applicaProgetto, totaleProgetto: totaleProgetto };
+    normalizzaProgetto: normalizzaProgetto, applicaProgetto: applicaProgetto, totaleProgetto: totaleProgetto,
+    applicaSpesa: applicaSpesa };
 }
