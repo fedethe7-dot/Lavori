@@ -73,7 +73,7 @@ const SpeseCasa = {
       if (!(set.categories || []).some(c => c.id === this.CAT.id) && j.admin) {
         await this.api('saveSettings', { settings: Object.assign({}, set, { categories: (set.categories || []).concat([this.CAT]) }) }, sess);
       }
-      const casa = set.houses.find(h => /casa/i.test(h.name)) || set.houses[0];
+      const casa = set.houses.find(h => h.id === 'h_casa') || set.houses.find(h => /^casa$/i.test(String(h.name).trim())) || set.houses[0];
       const payer = casa.defaultPayer || (casa.members || [])[0] || j.me;
       const resto = Object.assign({}, voglio);
       const esistenti = (s.expenses || []).filter(x => String(x.id).startsWith(this.PREF));

@@ -121,7 +121,20 @@ const Foglio = {
     if (!r.ok) throw new Error('Il foglio non risponde (' + r.status + ')');
     let d;
     try { d = await r.json(); } catch (e) { throw new Error('Il link dello script non sembra giusto'); }
-    if (!d.ok) throw new Error(d.error || 'Errore dal foglio');
+    if (!d.ok) {
+      // PIN vecchio su questo telefono: riprovo da solo con la chiave di sistema dell'hub e, se va, la tengo
+      if (/PIN/i.test(d.error || '') && pin === cfg.pin) {
+        let eco = ''; try { eco = localStorage.getItem('eco.chiave') || ''; } catch (e) { /* niente */ }
+        if (eco && eco !== cfg.pin) {
+          const d2 = await this.chiama(p, url, eco).catch(() => null);
+          if (d2) { cfg.pin = eco; S.set('pin', eco); st.pinErrato = false; return d2; }
+        }
+        st.pinErrato = true;
+        throw new Error('🔒 La chiave di Lavori su questo telefono non è giusta: tocca ⚙️ e scrivi la chiave di famiglia');
+      }
+      throw new Error(d.error || 'Errore dal foglio');
+    }
+    st.pinErrato = false;
     return d;
   }
 };
@@ -163,7 +176,7 @@ function carica(zitto) {
   return inFila(async () => {
     occupato(1);
     try { usa(await backend().chiama({ action: 'list' })); return true; }
-    catch (e) { if (!zitto) toast(e.message, true); return false; }
+    catch (e) { if (!zitto || st.pinErrato) toast(e.message, true); render(); return false; }
     finally { occupato(-1); }
   });
 }
@@ -204,6 +217,7 @@ function render() {
   if (dr && st.view !== 'home') avv += `<button class="banner hot" data-vai="home">📬 ${dr} da rispondere ›</button>`;
   if (pv && st.view !== 'home') avv += `<button class="banner hot" data-vai="home">🔔 ${pv} ${pv === 1 ? 'risposta' : 'risposte'} ›</button>`;
   if (!cfg.url) avv += `<button class="banner prova" data-go="imp">🧪 Prova · collega il foglio ›</button>`;
+  if (cfg.url && st.pinErrato) avv += `<button class="banner hot" data-go="imp">🔒 Chiave sbagliata: questi dati non sono aggiornati · tocca per sistemare ›</button>`;
   $('#avvisi').innerHTML = avv;
 
   document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('active', x.dataset.view === st.view));
